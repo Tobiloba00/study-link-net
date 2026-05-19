@@ -179,7 +179,7 @@ const Index = () => {
             <Button variant="ghost" size="sm" className="hidden sm:inline-flex text-sm font-medium" onClick={() => navigate('/auth')}>
               Log in
             </Button>
-            <Button size="sm" className="rounded-full h-9 px-4 bg-gradient-primary shadow-lg shadow-primary/20 hover:shadow-primary/40 hover:scale-105 active:scale-95 transition-all text-xs font-semibold" onClick={() => navigate('/auth')}>
+            <Button size="sm" className="rounded-full h-9 px-4 bg-gradient-primary shadow-lg shadow-primary/20 hover:shadow-primary/40 hover:scale-105 active:scale-95 transition-all text-xs font-semibold" onClick={() => navigate('/welcome')}>
               Get Started
               <ArrowRight className="h-3.5 w-3.5 ml-1" />
             </Button>
@@ -225,7 +225,7 @@ const Index = () => {
             <Button
               size="lg"
               className="h-13 px-8 text-base font-semibold rounded-full bg-gradient-primary shadow-xl shadow-primary/25 hover:shadow-primary/40 hover:scale-105 active:scale-95 transition-all"
-              onClick={() => navigate('/auth')}
+              onClick={() => navigate('/welcome')}
             >
               Start for free
               <ArrowRight className="h-4 w-4 ml-2" />
@@ -376,7 +376,7 @@ const Index = () => {
 
                   {/* CTA */}
                   <button
-                    onClick={() => navigate('/auth')}
+                    onClick={() => navigate('/welcome')}
                     className="w-full h-11 rounded-2xl bg-primary text-primary-foreground font-semibold text-sm flex items-center justify-center gap-1.5 shadow-md shadow-primary/30 hover:bg-primary/90 transition-colors"
                   >
                     <Plus className="h-4 w-4" />Post a Task
@@ -558,7 +558,7 @@ const Index = () => {
               <Button
                 size="lg"
                 className="h-14 px-10 text-base font-bold rounded-full bg-gradient-primary shadow-2xl shadow-primary/30 hover:shadow-primary/50 hover:scale-105 active:scale-95 transition-all"
-                onClick={() => navigate('/auth')}
+                onClick={() => navigate('/welcome')}
               >
                 Create free account
                 <ArrowRight className="h-4.5 w-4.5 ml-2" />
@@ -584,7 +584,7 @@ const Index = () => {
             <div className="flex items-center gap-6 text-sm text-muted-foreground">
               <button onClick={() => navigate('/feed')} className="hover:text-foreground transition-colors">Feed</button>
               <button onClick={() => navigate('/leaderboard')} className="hover:text-foreground transition-colors">Leaderboard</button>
-              <button onClick={() => navigate('/auth')} className="hover:text-foreground transition-colors">Sign up</button>
+              <button onClick={() => navigate('/welcome')} className="hover:text-foreground transition-colors">Sign up</button>
             </div>
             <p className="text-xs text-muted-foreground/60">
               Powered by <span className="font-semibold text-foreground/60">Omniai</span> &middot; {new Date().getFullYear()}
