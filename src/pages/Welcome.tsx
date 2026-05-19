@@ -111,12 +111,15 @@ const Welcome = () => {
   const isLast = selected === SLIDES.length - 1;
 
   return (
-    <div className="min-h-screen bg-muted/30 flex flex-col">
-      {/* Top bar */}
-      <header
-        className="flex items-center justify-between px-5 sm:px-8 py-4 flex-shrink-0"
-        style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 16px)" }}
-      >
+    <div
+      className="h-[100dvh] bg-background flex flex-col overflow-hidden"
+      style={{
+        paddingTop: "env(safe-area-inset-top, 0px)",
+        paddingBottom: "env(safe-area-inset-bottom, 0px)",
+      }}
+    >
+      {/* Top bar — fixed, slim */}
+      <header className="flex-shrink-0 h-14 px-4 sm:px-6 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
             <LogoMark size={18} />
@@ -127,21 +130,22 @@ const Welcome = () => {
         </div>
         <button
           onClick={finish}
-          className="text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
+          className="text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors px-2 py-1"
         >
           Skip
         </button>
       </header>
 
-      {/* Slides — single-card-centered carousel.
-          On desktop we show ~1.5 cards so prev/next peek and the user knows
-          there's more — matches the "stack of slides" feel of the reference. */}
-      <div className="flex-1 flex items-center overflow-hidden" ref={emblaRef}>
-        <div className="flex w-full px-4 sm:px-8 lg:px-0">
+      {/* Slides — fill remaining viewport.
+          Mobile: each slide takes the full width, edge-to-edge, no card chrome.
+          Desktop (lg+): show one centred 28rem card with rounded corners and
+          a peek of the neighbours, so the page reads as a deck of slides. */}
+      <div className="flex-1 min-h-0 overflow-hidden lg:py-4" ref={emblaRef}>
+        <div className="flex h-full">
           {SLIDES.map((slide, i) => (
             <div
               key={i}
-              className="flex-[0_0_100%] sm:flex-[0_0_80%] md:flex-[0_0_60%] lg:flex-[0_0_28rem] min-w-0 px-2 sm:px-3"
+              className="flex-[0_0_100%] lg:flex-[0_0_28rem] min-w-0 lg:px-3"
             >
               <SlideCard config={slide} active={i === selected} />
             </div>
@@ -149,42 +153,37 @@ const Welcome = () => {
         </div>
       </div>
 
-      {/* Bottom controls — circular prev/next + active CTA on last slide */}
-      <div
-        className="flex-shrink-0 px-5 sm:px-8 py-6"
-        style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 24px)" }}
-      >
-        <div className="max-w-md mx-auto flex items-center justify-center gap-4">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={goPrev}
-            disabled={selected === 0}
-            className="rounded-full h-11 w-11 border-border/60 bg-card disabled:opacity-30"
-            aria-label="Previous slide"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
+      {/* Bottom controls — pinned, always visible without scroll */}
+      <div className="flex-shrink-0 h-16 px-5 sm:px-8 flex items-center justify-center gap-3">
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={goPrev}
+          disabled={selected === 0}
+          className="rounded-full h-11 w-11 border-border/60 bg-card disabled:opacity-30"
+          aria-label="Previous slide"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
 
-          {isLast ? (
-            <Button
-              onClick={finish}
-              className="h-11 px-6 rounded-full bg-primary text-primary-foreground font-semibold shadow-md shadow-primary/25"
-            >
-              Get started
-              <ArrowRight className="h-4 w-4 ml-1.5" />
-            </Button>
-          ) : (
-            <Button
-              size="icon"
-              onClick={goNext}
-              className="rounded-full h-11 w-11 bg-primary text-primary-foreground shadow-md shadow-primary/25"
-              aria-label="Next slide"
-            >
-              <ArrowRight className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
+        {isLast ? (
+          <Button
+            onClick={finish}
+            className="h-11 px-6 rounded-full bg-primary text-primary-foreground font-semibold shadow-md shadow-primary/25"
+          >
+            Get started
+            <ArrowRight className="h-4 w-4 ml-1.5" />
+          </Button>
+        ) : (
+          <Button
+            size="icon"
+            onClick={goNext}
+            className="rounded-full h-11 w-11 bg-primary text-primary-foreground shadow-md shadow-primary/25"
+            aria-label="Next slide"
+          >
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -196,55 +195,66 @@ const Welcome = () => {
    top-left, 3-dot active indicator in the bottom-left of the
    text pane, soft tinted bg, full-bleed image.
    ──────────────────────────────────────────────────────────── */
-const SlideCard = ({ config, active }: { config: SlideConfig; active: boolean }) => (
-  <div
-    className={cn(
-      "relative h-full max-h-[680px] w-full bg-card rounded-[28px] border border-border/40 shadow-sm overflow-hidden",
-      "flex flex-col transition-all duration-500",
-      active ? "opacity-100 scale-100" : "opacity-60 scale-[0.96]"
-    )}
-  >
-    {/* Illustration pane — themed background + photo + overlay chips */}
-    <div className={cn("relative flex-1 min-h-[220px] sm:min-h-[280px]", config.bg)}>
-      <div className="absolute inset-0 flex items-center justify-center">
-        {config.art}
+const SlideCard = ({ config, active }: { config: SlideConfig; active: boolean }) => {
+  // Used by the in-card dots indicator
+  const myIndex = SLIDES.findIndex((s) => s.index === config.index);
+
+  return (
+    <div
+      className={cn(
+        // Always fill the carousel column. No max-height — content shapes the
+        // distribution between photo and copy.
+        "h-full w-full bg-card flex flex-col overflow-hidden",
+        // Mobile: edge-to-edge (no border/shadow/round). Desktop: card chrome.
+        "lg:rounded-[28px] lg:border lg:border-border/40 lg:shadow-sm",
+        "transition-all duration-500",
+        active ? "opacity-100 scale-100" : "opacity-60 scale-[0.97]"
+      )}
+    >
+      {/* Illustration pane — fills remaining vertical space after the copy
+          block has claimed its content height. flex-1 + min-h-0 is what
+          keeps it from pushing the copy off-screen. */}
+      <div className={cn("relative flex-1 min-h-0", config.bg)}>
+        <div className="absolute inset-0 flex items-center justify-center">
+          {config.art}
+        </div>
+
+        {/* Number pill (top-left) */}
+        <div className={cn(
+          "absolute top-4 left-4 rounded-md px-2.5 py-1 text-[11px] font-extrabold tracking-wider shadow-sm",
+          config.pill, config.pillText
+        )}>
+          {config.index}
+        </div>
       </div>
 
-      {/* Number pill (top-left) */}
-      <div className={cn(
-        "absolute top-4 left-4 rounded-md px-2.5 py-1 text-[11px] font-extrabold tracking-wider shadow-sm",
-        config.pill, config.pillText
-      )}>
-        {config.index}
+      {/* Copy pane — fixed-height-ish, never grows past content. */}
+      <div className="flex-shrink-0 px-5 sm:px-6 pt-5 pb-4 space-y-2">
+        <h3 className="text-xl sm:text-2xl font-extrabold tracking-tight leading-tight">
+          {config.title}
+        </h3>
+        <p className="text-[13px] sm:text-[15px] text-muted-foreground leading-relaxed line-clamp-3 sm:line-clamp-none">
+          {config.body}
+        </p>
+
+        {/* Tiny in-card dots indicator */}
+        <div className="flex items-center gap-1.5 pt-2">
+          {SLIDES.map((_, i) => (
+            <span
+              key={i}
+              className={cn(
+                "h-1.5 rounded-full transition-all",
+                active && i === myIndex
+                  ? "w-5 bg-primary"
+                  : "w-1.5 bg-muted-foreground/30"
+              )}
+            />
+          ))}
+        </div>
       </div>
     </div>
-
-    {/* Copy pane */}
-    <div className="px-5 sm:px-6 py-5 sm:py-6 space-y-2">
-      <h3 className="text-xl sm:text-2xl font-extrabold tracking-tight leading-tight">
-        {config.title}
-      </h3>
-      <p className="text-sm sm:text-[15px] text-muted-foreground leading-relaxed">
-        {config.body}
-      </p>
-
-      {/* Tiny in-card dots indicator */}
-      <div className="flex items-center gap-1.5 pt-2">
-        {SLIDES.map((_, i) => (
-          <span
-            key={i}
-            className={cn(
-              "h-1.5 rounded-full transition-all",
-              active && i === SLIDES.findIndex((s) => s.index === config.index)
-                ? "w-5 bg-primary"
-                : "w-1.5 bg-muted-foreground/30"
-            )}
-          />
-        ))}
-      </div>
-    </div>
-  </div>
-);
+  );
+};
 
 /* ────────────────────────────────────────────────────────────
    Per-slide illustrations.
