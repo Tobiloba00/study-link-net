@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, memo } from "react";
 import { MessageBubble } from "./MessageBubble";
 import { groupMessagesByDate } from "./utils";
 import { Message, UserProfile, ReplyContext, PostContext } from "./types";
-import { Loader2, ChevronDown, Lock, MessageSquare, Sparkles } from "lucide-react";
+import { Loader2, ChevronDown, MessageSquare, Sparkles } from "lucide-react";
 import { ImageLightbox } from "./ImageLightbox";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
@@ -132,18 +132,6 @@ export const ChatView = memo(({
         onScroll={handleScroll}
         className="h-full overflow-y-auto px-3 sm:px-4 md:px-5 py-4 relative z-[1]"
       >
-        {/* Encryption notice */}
-        {messages.length > 0 && (
-          <div className="flex justify-center mb-5">
-            <div className="bg-amber-500/10 dark:bg-amber-400/10 text-amber-700 dark:text-amber-300 rounded-lg px-3 py-1.5 flex items-center gap-1.5">
-              <Lock className="h-3 w-3" />
-              <p className="text-[10px] font-medium tracking-tight">
-                Messages are private and secure
-              </p>
-            </div>
-          </div>
-        )}
-
         {/* Load more */}
         {isLoadingMore && (
           <div className="flex justify-center py-3 mb-3">

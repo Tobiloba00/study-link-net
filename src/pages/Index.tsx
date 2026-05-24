@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import {
   MessageSquare, TrendingUp, Users, ArrowRight,
   Loader2, Sparkles, BookOpen, ShoppingBag, Shield, Zap, Star,
-  ChevronRight, Search, Bell, Plus,
+  ChevronRight, Search, Bell, Plus, Heart,
   GraduationCap, FileText, Building2,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -187,8 +187,167 @@ const Index = () => {
         </div>
       </header>
 
-      {/* ═══ Hero Section ═══ */}
-      <section className="relative pt-[calc(env(safe-area-inset-top,0px)+6rem)] pb-10 md:pt-32 md:pb-16">
+      {/* ═══ Hero Section — DESKTOP (split layout) ═══
+          Two-column hero: text + CTAs on the left, a phone-style app
+          preview on the right with floating chat bubbles, sparkles,
+          and real recent-tasks data. Mobile uses the centered hero
+          below + the standalone live-preview section. */}
+      <section className="hidden md:block relative pt-32 pb-16 overflow-hidden">
+        {/* Soft ambient blobs */}
+        <div className="absolute top-20 -left-32 w-[600px] h-[600px] bg-primary/5 rounded-full blur-[120px] pointer-events-none" />
+        <div className="absolute -top-10 -right-20 w-[500px] h-[500px] bg-accent/5 rounded-full blur-[110px] pointer-events-none" />
+
+        <div className="max-w-6xl mx-auto px-6 lg:px-8 relative z-10">
+          <div className="grid lg:grid-cols-[1.1fr_1fr] gap-10 lg:gap-14 items-center">
+
+            {/* ── LEFT: copy column ── */}
+            <div>
+              {/* "Made for students" pill */}
+              <div className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-primary/5 border border-primary/10 mb-8">
+                <span className="text-xs font-semibold text-foreground">Made for students, by students</span>
+                <Heart className="h-3 w-3 text-primary fill-primary" />
+              </div>
+
+              {/* Big headline — second word in primary blue, stacked */}
+              <h1 className="text-5xl lg:text-6xl xl:text-7xl font-extrabold tracking-tight leading-[1.05] mb-6">
+                Your campus.<br />
+                <span className="text-primary">Connected.</span>
+              </h1>
+
+              <p className="text-base lg:text-lg text-muted-foreground leading-relaxed mb-7 max-w-md">
+                Post tasks, get help, buy &amp; sell, connect with smart students
+                and achieve more together.
+              </p>
+
+              {/* Avatar group + real student count */}
+              <div className="flex items-center gap-3 mb-8">
+                <div className="flex -space-x-2">
+                  {['A', 'K', 'T', 'N'].map((letter, i) => (
+                    <div
+                      key={i}
+                      className="h-9 w-9 rounded-full bg-gradient-primary border-2 border-background flex items-center justify-center"
+                    >
+                      <span className="text-xs text-white font-bold">{letter}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-sm font-semibold text-foreground">
+                  {stats && stats.users >= 10
+                    ? `${formatNumber(stats.users)}+ students already joined`
+                    : 'Students from real Nigerian universities'}
+                </p>
+              </div>
+
+              {/* CTAs */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <Button
+                  size="lg"
+                  className="h-12 px-7 rounded-full bg-primary hover:bg-primary/90 shadow-lg shadow-primary/25 text-base font-semibold"
+                  onClick={() => navigate('/welcome')}
+                >
+                  Create Account
+                  <ArrowRight className="h-4 w-4 ml-2" />
+                </Button>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="h-12 px-7 rounded-full border-border/60 hover:bg-muted/40 text-base font-semibold"
+                  onClick={() => navigate('/auth')}
+                >
+                  I already have an account
+                </Button>
+              </div>
+            </div>
+
+            {/* ── RIGHT: app preview + floating bubbles ──
+                Constrained to phone width so the card keeps its tall/narrow
+                aspect instead of stretching out across the column. */}
+            <div className="relative w-full max-w-[340px] mx-auto">
+              <MockupAmbience />
+
+              {/* Phone-style preview card */}
+              <div className="relative rounded-[36px] border border-border/40 bg-card shadow-2xl shadow-primary/15 overflow-hidden z-20">
+                <div className="px-5 pt-7 pb-5 space-y-4">
+                  {/* Greeting */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[11px] text-muted-foreground leading-none">Good morning,</p>
+                      <p className="text-base font-bold tracking-tight mt-1">Tobiloba <span aria-hidden>👋</span></p>
+                    </div>
+                    <button className="relative h-9 w-9 rounded-full hover:bg-muted/40 flex items-center justify-center text-muted-foreground" aria-label="Notifications">
+                      <Bell className="h-[18px] w-[18px]" />
+                      <span className="absolute top-1 right-1.5 h-1.5 w-1.5 rounded-full bg-red-500" />
+                    </button>
+                  </div>
+
+                  {/* Search */}
+                  <div className="flex items-center gap-2 h-10 px-3.5 rounded-2xl bg-muted/40 text-muted-foreground">
+                    <Search className="h-3.5 w-3.5" />
+                    <span className="text-xs">Search for tasks, people, or anything…</span>
+                  </div>
+
+                  {/* Categories — 4 tiles to match reference */}
+                  <div className="grid grid-cols-4 gap-2">
+                    <CategoryTile icon={BookOpen}      label="Academic Help" tint="bg-primary/10 text-primary" />
+                    <CategoryTile icon={Users}         label="Tutoring"      tint="bg-rose-500/10 text-rose-600" />
+                    <CategoryTile icon={ShoppingBag}   label="Buy & Sell"    tint="bg-accent/10 text-accent" />
+                    <CategoryTile icon={MessageSquare} label="Collab"        tint="bg-violet-500/10 text-violet-600" />
+                  </div>
+
+                  {/* Recent Task */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[13px] font-bold tracking-tight">Recent Task</p>
+                      <span className="text-[11px] font-semibold text-primary inline-flex items-center gap-0.5">
+                        View all <ArrowRight className="h-2.5 w-2.5" />
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      {recentTasks.length > 0 ? (
+                        recentTasks.map((t) => (
+                          <PreviewTaskCard
+                            key={t.id}
+                            title={t.title}
+                            category={t.category}
+                            price={t.optional_price}
+                            ago={formatDistanceToNow(new Date(t.created_at), { addSuffix: false })}
+                          />
+                        ))
+                      ) : (
+                        <>
+                          <PreviewTaskCard title="Need help with Calculus 101" category="Academic Help" price={5000} ago="2h" />
+                          <PreviewTaskCard title="Marketing 300L notes" category="Buy & Sell" price={2000} ago="5h" />
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* "Students interested" + View Task button */}
+                  <div className="flex items-center justify-between pt-1">
+                    <div className="flex items-center gap-2">
+                      <div className="flex -space-x-1.5">
+                        {[0, 1, 2].map((i) => (
+                          <div key={i} className="h-5 w-5 rounded-full bg-gradient-primary ring-2 ring-card" />
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">3 students interested</p>
+                    </div>
+                    <button
+                      onClick={() => navigate('/welcome')}
+                      className="h-7 px-3 rounded-lg bg-primary text-primary-foreground text-[10px] font-bold"
+                    >
+                      View Task
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ═══ Hero Section — MOBILE (centered) ═══ */}
+      <section className="md:hidden relative pt-[calc(env(safe-area-inset-top,0px)+6rem)] pb-10">
         {/* Decorative elements */}
         <div className="absolute top-20 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-primary/5 rounded-full blur-[120px] pointer-events-none" />
         <div className="absolute top-40 left-1/4 w-[300px] h-[300px] bg-accent/5 rounded-full blur-[100px] pointer-events-none animate-float-slow" />
@@ -248,8 +407,8 @@ const Index = () => {
         </div>
       </section>
 
-      {/* ═══ Live preview — what the platform actually looks like ═══ */}
-      <section className="relative py-10 md:py-14">
+      {/* ═══ Live preview — MOBILE ONLY (desktop has the mockup baked into the hero) ═══ */}
+      <section className="md:hidden relative py-10">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="grid lg:grid-cols-[1fr_360px] gap-8 lg:gap-12 items-start">
             {/* ── Copy ── */}
@@ -303,9 +462,10 @@ const Index = () => {
               </ul>
             </div>
 
-            {/* ── Phone-style preview ── */}
-            <div className="order-1 lg:order-2 mx-auto w-full max-w-[340px]">
-              <div className="relative rounded-[36px] border border-border/40 bg-card shadow-2xl shadow-primary/10 overflow-hidden">
+            {/* ── Phone-style preview with the full ambient layer ── */}
+            <div className="order-1 lg:order-2 relative mx-auto w-full max-w-[340px]">
+              <MockupAmbience />
+              <div className="relative z-20 rounded-[36px] border border-border/40 bg-card shadow-2xl shadow-primary/10 overflow-hidden">
                 {/* Notch hint */}
                 <div className="absolute top-3 left-1/2 -translate-x-1/2 w-20 h-1.5 rounded-full bg-foreground/10" />
 
@@ -413,22 +573,22 @@ const Index = () => {
       </section>
 
       {/* ═══ Features Grid ═══ */}
-      <section ref={featuresSection.ref} className="py-14 md:py-20">
+      <section ref={featuresSection.ref} className="py-10 sm:py-14 md:py-20">
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
-          <div className="text-center mb-12 md:mb-16">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent/10 text-accent text-xs font-bold uppercase tracking-wider mb-4">
+          <div className="text-center mb-8 sm:mb-12 md:mb-16">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent/10 text-accent text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-3 sm:mb-4">
               <Zap className="h-3 w-3" /> Features
             </div>
-            <h2 className="text-3xl md:text-4xl lg:text-5xl font-extrabold tracking-tight mb-4">
+            <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-extrabold tracking-tight mb-3 sm:mb-4 leading-tight">
               Everything you need to{" "}
               <span className="text-gradient">thrive on campus</span>
             </h2>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+            <p className="text-sm sm:text-base md:text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
               Built by students, for students. Every feature designed to make campus life easier.
             </p>
           </div>
 
-          <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 ${featuresSection.inView ? 'animate-stagger' : ''}`}>
+          <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 md:gap-6 ${featuresSection.inView ? 'animate-stagger' : ''}`}>
             {[
               {
                 icon: BookOpen,
@@ -481,13 +641,13 @@ const Index = () => {
             ].map((feature, i) => (
               <div
                 key={i}
-                className={`group relative rounded-3xl border border-border/50 bg-gradient-to-br ${feature.gradient} p-7 hover:border-primary/20 hover:shadow-xl hover:shadow-primary/5 transition-all duration-500 cursor-default`}
+                className={`group relative rounded-2xl sm:rounded-3xl border border-border/50 bg-gradient-to-br ${feature.gradient} p-4 sm:p-5 md:p-7 hover:border-primary/20 hover:shadow-xl hover:shadow-primary/5 transition-all duration-500 cursor-default text-center sm:text-left`}
               >
-                <div className={`h-12 w-12 rounded-2xl ${feature.iconBg} flex items-center justify-center mb-5 group-hover:scale-110 transition-transform duration-300`}>
-                  <feature.icon className={`h-6 w-6 ${feature.iconColor}`} />
+                <div className={`h-9 w-9 sm:h-10 sm:w-10 md:h-12 md:w-12 rounded-xl sm:rounded-2xl ${feature.iconBg} flex items-center justify-center mb-3 sm:mb-4 md:mb-5 group-hover:scale-110 transition-transform duration-300 mx-auto sm:mx-0`}>
+                  <feature.icon className={`h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6 ${feature.iconColor}`} />
                 </div>
-                <h3 className="text-lg font-bold mb-2 tracking-tight">{feature.title}</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">{feature.description}</p>
+                <h3 className="text-base sm:text-lg font-bold mb-1.5 sm:mb-2 tracking-tight">{feature.title}</h3>
+                <p className="text-[13px] sm:text-sm text-muted-foreground leading-relaxed">{feature.description}</p>
               </div>
             ))}
           </div>
@@ -495,18 +655,18 @@ const Index = () => {
       </section>
 
       {/* ═══ How It Works ═══ */}
-      <section ref={howItWorksSection.ref} className="py-14 md:py-20 border-y border-border/50 bg-muted/30">
+      <section ref={howItWorksSection.ref} className="py-10 sm:py-14 md:py-20 border-y border-border/50 bg-muted/30">
         <div className="max-w-5xl mx-auto px-4 sm:px-6">
-          <div className="text-center mb-12 md:mb-16">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-bold uppercase tracking-wider mb-4">
+          <div className="text-center mb-8 sm:mb-12 md:mb-16">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-3 sm:mb-4">
               <Shield className="h-3 w-3" /> How it works
             </div>
-            <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight mb-4">
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight mb-3 sm:mb-4 leading-tight">
               Up and running in <span className="text-gradient">3 minutes</span>
             </h2>
           </div>
 
-          <div className={`grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-12 ${howItWorksSection.inView ? 'animate-stagger' : ''}`}>
+          <div className={`grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8 md:gap-12 ${howItWorksSection.inView ? 'animate-stagger' : ''}`}>
             {[
               {
                 step: '01',
@@ -525,11 +685,11 @@ const Index = () => {
               },
             ].map((item, i) => (
               <div key={i} className="relative text-center md:text-left">
-                <div className="text-6xl md:text-7xl font-black text-primary/8 dark:text-primary/10 mb-4 leading-none tracking-tighter select-none">
+                <div className="text-5xl sm:text-6xl md:text-7xl font-black text-primary/8 dark:text-primary/10 mb-3 sm:mb-4 leading-none tracking-tighter select-none">
                   {item.step}
                 </div>
-                <h3 className="text-xl font-bold mb-3 tracking-tight -mt-2">{item.title}</h3>
-                <p className="text-muted-foreground leading-relaxed">{item.description}</p>
+                <h3 className="text-lg sm:text-xl font-bold mb-2 sm:mb-3 tracking-tight -mt-1 sm:-mt-2">{item.title}</h3>
+                <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">{item.description}</p>
               </div>
             ))}
           </div>
@@ -638,5 +798,118 @@ const PreviewTaskCard = ({
     </div>
   );
 };
+
+/* ────────────────────────────────────────────────────────────────
+   MockupAmbience — the full ambient design layer around the phone:
+   blue oval backdrops, sparkles, dashed arcs, swoosh arrows, floating
+   chat bubbles, "+1 joined" pill, and scattered dots.
+   Reused on both desktop hero and mobile live-preview, so the phone
+   feels like part of a composed scene in both contexts.
+   Offsets are conservative so they don't clip on a 360px screen.
+   ──────────────────────────────────────────────────────────── */
+const MockupAmbience = () => (
+  <>
+    {/* Soft oval blue backdrop — two layers for depth */}
+    <div className="absolute -inset-x-10 -inset-y-3 bg-primary/15 dark:bg-primary/20 rounded-[50%] blur-3xl pointer-events-none" />
+    <div className="absolute -inset-x-4 -inset-y-1 bg-gradient-to-br from-blue-200/30 via-primary/8 to-violet-200/25 dark:from-blue-900/20 dark:via-primary/15 dark:to-violet-900/20 rounded-[50%] blur-2xl pointer-events-none" />
+
+    {/* TOP-LEFT cluster */}
+    <div className="absolute -top-2 -left-1 w-3 h-3 rounded-full border-2 border-emerald-400/70 z-10" />
+    <Sparkles className="absolute -top-6 left-8 w-5 h-5 text-amber-400 z-10" strokeWidth={2} />
+    <div className="absolute -top-3 left-20 w-2.5 h-2.5 rounded-full border border-rose-300/70 z-10" />
+    <Sparkles className="absolute top-6 -left-5 w-3 h-3 text-amber-300 z-10" strokeWidth={2} />
+
+    {/* TOP-RIGHT cluster — swoosh arrow + dashed arc + sparkles */}
+    <svg
+      className="absolute -top-5 -right-2 w-12 h-12 z-10"
+      viewBox="0 0 56 56"
+      fill="none"
+      stroke="#a78bfa"
+      strokeOpacity={0.7}
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M6 32 Q 20 6, 44 18" />
+      <path d="M38 13 L 44 18 L 38 24" />
+    </svg>
+    <svg
+      className="absolute top-16 -right-7 w-16 h-16 z-10"
+      viewBox="0 0 80 80"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path d="M 40 6 A 34 34 0 0 1 74 40" stroke="#cbd5e1" strokeWidth="1.5" strokeDasharray="3 4" strokeLinecap="round" />
+    </svg>
+    <Sparkles className="absolute top-[38%] -right-4 w-4 h-4 text-violet-400/80 z-10" strokeWidth={2} />
+    <div className="absolute top-[52%] -right-2 w-2 h-2 rounded-full bg-emerald-400 z-10" />
+    <Sparkles className="absolute top-[20%] -right-7 w-3 h-3 text-rose-400/80 z-10" strokeWidth={2} />
+
+    {/* MID-LEFT dashed arc, mirrored */}
+    <svg
+      className="absolute top-[55%] -left-10 w-16 h-16 z-10"
+      viewBox="0 0 80 80"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path d="M 6 40 A 34 34 0 0 1 40 6" stroke="#cbd5e1" strokeWidth="1.5" strokeDasharray="3 4" strokeLinecap="round" />
+    </svg>
+
+    {/* BOTTOM-RIGHT cluster — swoosh + sparkle + star */}
+    <svg
+      className="absolute -bottom-3 -right-6 w-12 h-12 z-10"
+      viewBox="0 0 56 56"
+      fill="none"
+      stroke="#a78bfa"
+      strokeOpacity={0.6}
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M50 18 Q 32 42, 8 32" />
+      <path d="M14 26 L 8 32 L 16 38" />
+    </svg>
+    <Sparkles className="absolute -bottom-1 -left-3 w-4 h-4 text-violet-400/70 z-10" strokeWidth={2} />
+    <Star className="absolute bottom-32 -right-4 w-3.5 h-3.5 text-amber-400 fill-amber-400 z-10" />
+
+    {/* Floating "Can anyone help with this?" bubble — top-left of mockup.
+        Offsets kept small (-left-1 mobile, -left-4 desktop) so the bubble
+        never clips off-screen on a 360px viewport. */}
+    <div className="absolute -top-2 -left-1 sm:-left-4 z-30 bg-primary text-primary-foreground rounded-2xl rounded-bl-md px-3 py-2 shadow-xl shadow-primary/25 max-w-[140px] sm:max-w-[150px]">
+      <p className="text-[11px] font-semibold leading-tight">Can anyone help with this?</p>
+      <p className="text-[9px] opacity-80 mt-0.5">2h ago</p>
+    </div>
+
+    {/* Floating "Reply from Daniel A." bubble — mid-left */}
+    <div className="absolute top-[42%] -left-2 sm:-left-6 z-30 bg-emerald-500 text-white rounded-2xl rounded-tl-md px-3 py-2 shadow-xl shadow-emerald-500/25 flex items-center gap-1.5">
+      <div className="h-6 w-6 rounded-full bg-white/25 flex items-center justify-center">
+        <span className="text-[10px] font-bold">D</span>
+      </div>
+      <div>
+        <p className="text-[10px] font-semibold leading-tight opacity-80">Reply from</p>
+        <p className="text-[11px] font-bold leading-tight">Daniel A.</p>
+      </div>
+    </div>
+
+    {/* Floating "+1 joined" mini-pill — bottom-right, gives live-activity feel */}
+    <div className="absolute -bottom-3 right-3 z-30 bg-card border border-border/50 rounded-full pl-1 pr-2.5 py-1 shadow-lg shadow-primary/10 flex items-center gap-1.5">
+      <div className="h-5 w-5 rounded-full bg-gradient-primary flex items-center justify-center">
+        <span className="text-[8px] text-white font-extrabold">M</span>
+      </div>
+      <span className="text-[10px] font-bold text-foreground">+1 joined</span>
+      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+    </div>
+
+    {/* Scattered dots — ambient texture */}
+    <div className="absolute top-1/2 -left-5 w-1.5 h-1.5 rounded-full bg-primary/50 z-10" />
+    <div className="absolute bottom-20 -right-4 w-1 h-1 rounded-full bg-rose-400/60 z-10" />
+    <div className="absolute -top-1 right-1/3 w-1 h-1 rounded-full bg-amber-400/60 z-10" />
+    <div className="absolute top-1/3 -left-7 w-1 h-1 rounded-full bg-violet-400/60 z-10" />
+    <div className="absolute bottom-1/3 -left-6 w-1 h-1 rounded-full bg-emerald-400/60 z-10" />
+    <div className="absolute -bottom-2 left-1/3 w-1.5 h-1.5 rounded-full bg-rose-300/70 z-10" />
+  </>
+);
 
 export default Index;
