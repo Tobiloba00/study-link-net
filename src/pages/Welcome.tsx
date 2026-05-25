@@ -69,32 +69,33 @@ const Slide1Hero = () => (
   <div className="relative h-full w-full bg-[#FAF6F0] overflow-hidden">
     <Badge index="01" />
 
-    {/* Centred composition box — fixed 5:6 aspect keeps the circles
-        overlapping correctly on every phone height */}
-    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[86%] max-w-[340px] aspect-[5/6]">
-      {/* Small third avatar — top-left, decorative */}
+    {/* Centred composition — sized by the hero pane's HEIGHT (not width)
+        so it always fits inside the 50dvh pane on every phone. Square
+        aspect = tight, balanced triangle of circles + bubble below. */}
+    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-[88%] max-h-[340px] aspect-square">
+      {/* Small third avatar — top-left corner */}
       <img
         src={IMG.helpThird}
         alt="Another student"
-        className="absolute top-[6%] left-0 w-[22%] aspect-square rounded-full object-cover border-[3px] border-white shadow-[0_8px_20px_rgba(15,23,42,0.15)] z-30"
+        className="absolute top-[2%] left-0 w-[24%] aspect-square rounded-full object-cover border-[3px] border-white shadow-[0_8px_20px_rgba(15,23,42,0.15)] z-30"
       />
 
-      {/* Female — bottom-left, larger circle, natural right-gaze */}
-      <img
-        src={IMG.helpFemale}
-        alt="Student asking for help"
-        className="absolute bottom-0 left-[6%] w-[58%] aspect-square rounded-full object-cover border-[4px] border-white shadow-[0_14px_30px_rgba(15,23,42,0.15)] z-10"
-      />
-
-      {/* Male — top-right, larger circle, mirrored so his gaze meets hers */}
+      {/* Male — top-right, mirrored so his gaze points down-left toward her */}
       <img
         src={IMG.helpMale}
         alt="Student offering help"
-        className="absolute top-[8%] right-0 w-[58%] aspect-square rounded-full object-cover border-[4px] border-white shadow-[0_14px_30px_rgba(15,23,42,0.15)] z-20 scale-x-[-1]"
+        className="absolute top-[10%] right-0 w-[54%] aspect-square rounded-full object-cover border-[4px] border-white shadow-[0_14px_30px_rgba(15,23,42,0.15)] z-20 scale-x-[-1]"
       />
 
-      {/* "I can help!" — blue bubble with bottom-left tail, sits below the female */}
-      <div className="absolute bottom-[-4px] left-[34%] z-40">
+      {/* Female — bottom-left, natural right-gaze toward him */}
+      <img
+        src={IMG.helpFemale}
+        alt="Student asking for help"
+        className="absolute bottom-[10%] left-[4%] w-[58%] aspect-square rounded-full object-cover border-[4px] border-white shadow-[0_14px_30px_rgba(15,23,42,0.15)] z-10"
+      />
+
+      {/* "I can help!" — blue bubble with bottom-left tail, just under female */}
+      <div className="absolute bottom-0 left-[40%] z-40">
         <div className="relative bg-primary text-primary-foreground rounded-2xl px-3.5 py-2 shadow-[0_10px_24px_rgba(37,99,235,0.30)]">
           <p className="text-[13px] font-bold whitespace-nowrap">I can help!</p>
           {/* Tail — rotated square tucked under the bubble's bottom-left */}
