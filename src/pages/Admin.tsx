@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Navbar } from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,9 +10,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import {
   Trash2, Users, FileText, ShieldCheck, Megaphone, Building2, Flag, Check, X, Loader2,
-  LayoutDashboard, Activity, Plus, ChevronRight, ArrowRight, Bell,
+  LayoutDashboard, Activity, Plus, ChevronRight, ChevronLeft, ArrowRight, Bell,
   TrendingUp, Settings as SettingsIcon, MoreHorizontal, BarChart3,
+  UserPlus, UserMinus, Mail, Sparkles as SparklesIcon, Search as SearchIcon,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useNavigate } from "react-router-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -978,142 +986,531 @@ const PostsTab = () => {
   );
 };
 
-const UsersTab = () => {
-  const [users, setUsers] = useState<any[]>([]);
-  const [adminIds, setAdminIds] = useState<Set<string>>(new Set());
-  const [search, setSearch] = useState("");
-  const [showAdminsOnly, setShowAdminsOnly] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [me, setMe] = useState<string | null>(null);
+/* ────────────────────────────────────────────────────────────────
+   UsersTab — enterprise B2B admin pattern (Stripe / Shopify / Linear).
 
-  const load = async () => {
-    const [{ data: profs }, { data: roles }, { data: { user } }] = await Promise.all([
-      supabase.from("profiles").select("id, name, email, course, rating, profile_picture, created_at")
-        .order("created_at", { ascending: false }).limit(500),
+   Replaces the previous infinite-scroll list with:
+     • Stats header  — total users / admins / new this week
+     • Saved-view tabs — All Users / Admins / New This Week
+     • Server-side search (debounced 300ms, ilike on name+email+course)
+     • Page-based pagination (20 / 50 / 100 per page) with sticky table
+       header. Admin needs orientation ("user was on page 3"), not an
+       infinite stream of jumping rows.
+     • Numbered rows (continuous across pages) for easy reference
+     • Bulk selection — checkbox column + contextual action bar that
+       slides in when ≥1 user is selected
+     • Per-row kebab (⋯) menu — Make admin / Remove admin / Copy email
+     • Row click opens a side-drawer with the full user detail
+   ──────────────────────────────────────────────────────────── */
+const PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+type UserRow = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  course: string | null;
+  rating: number | null;
+  profile_picture: string | null;
+  created_at: string;
+};
+
+type UsersView = "all" | "admins" | "new";
+
+const UsersTab = () => {
+  // ─── Data ──────────────────────────────────────────────────────
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [adminIds, setAdminIds] = useState<Set<string>>(new Set());
+  const [me, setMe] = useState<string | null>(null);
+  const [stats, setStats] = useState({ total: 0, admins: 0, newWeek: 0 });
+  const [totalCount, setTotalCount] = useState(0);
+
+  // ─── Filter + paging ───────────────────────────────────────────
+  const [view, setView] = useState<UsersView>("all");
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [page, setPage] = useState(0); // 0-indexed
+  const [pageSize, setPageSize] = useState<typeof PAGE_SIZE_OPTIONS[number]>(20);
+
+  // ─── UI state ──────────────────────────────────────────────────
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [drawerUser, setDrawerUser] = useState<UserRow | null>(null);
+
+  // ─── Debounce search ───────────────────────────────────────────
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(0); // any new search resets to first page
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset page when tab changes
+  useEffect(() => { setPage(0); }, [view]);
+
+  // ─── One-shot: admins, current user, top-level stats ──────────
+  const loadAdminsAndStats = useCallback(async () => {
+    const weekAgo = new Date(Date.now() - WEEK_MS).toISOString();
+    const [{ data: roles }, { count: total }, { count: newWeek }, { data: { user } }] = await Promise.all([
       supabase.from("user_roles").select("user_id").eq("role", "admin"),
+      supabase.from("profiles").select("*", { count: "exact", head: true }),
+      supabase.from("profiles").select("*", { count: "exact", head: true }).gte("created_at", weekAgo),
       supabase.auth.getUser(),
     ]);
-    setUsers(profs || []);
-    setAdminIds(new Set((roles || []).map((r: any) => r.user_id)));
+    const set = new Set((roles || []).map((r: any) => r.user_id));
+    setAdminIds(set);
     setMe(user?.id ?? null);
-  };
-  useEffect(() => { load(); }, []);
+    setStats({ total: total ?? 0, admins: set.size, newWeek: newWeek ?? 0 });
+  }, []);
 
-  const toggleAdmin = async (userId: string, makeAdmin: boolean) => {
-    if (!makeAdmin) {
-      const ok = confirm(`Remove admin access from this account? They'll lose the dashboard immediately.`);
-      if (!ok) return;
+  useEffect(() => { loadAdminsAndStats(); }, [loadAdminsAndStats]);
+
+  // ─── Paginated user fetch (re-runs when filters/page change) ──
+  const fetchPage = useCallback(async () => {
+    setLoading(true);
+
+    let q = supabase
+      .from("profiles")
+      .select("id, name, email, course, rating, profile_picture, created_at", { count: "exact" })
+      .order("created_at", { ascending: false })
+      .range(page * pageSize, (page + 1) * pageSize - 1);
+
+    if (debouncedSearch) {
+      const term = debouncedSearch.replace(/[%_]/g, "\\$&");
+      q = q.or(`name.ilike.%${term}%,email.ilike.%${term}%,course.ilike.%${term}%`);
     }
-    setBusy(userId);
+    if (view === "admins") {
+      if (adminIds.size === 0) {
+        setUsers([]); setTotalCount(0); setLoading(false); return;
+      }
+      q = q.in("id", Array.from(adminIds));
+    } else if (view === "new") {
+      const weekAgo = new Date(Date.now() - WEEK_MS).toISOString();
+      q = q.gte("created_at", weekAgo);
+    }
+
+    const { data, count, error } = await q;
+    if (error) {
+      toast.error("Couldn't load users");
+      setLoading(false); return;
+    }
+    setUsers((data as UserRow[]) || []);
+    setTotalCount(count ?? 0);
+    setLoading(false);
+  }, [page, pageSize, debouncedSearch, view, adminIds]);
+
+  useEffect(() => { fetchPage(); }, [fetchPage]);
+
+  // ─── Computed ──────────────────────────────────────────────────
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const startRow = totalCount === 0 ? 0 : page * pageSize + 1;
+  const endRow = Math.min(totalCount, (page + 1) * pageSize);
+  const allOnPageSelected = users.length > 0 && users.every((u) => selectedIds.has(u.id));
+  const selectedNonSelfNonAdmin = Array.from(selectedIds).filter((id) => id !== me && !adminIds.has(id));
+  const selectedNonSelfAdmin = Array.from(selectedIds).filter((id) => id !== me && adminIds.has(id));
+
+  // ─── Selection helpers ─────────────────────────────────────────
+  const toggleOne = (id: string) =>
+    setSelectedIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const toggleAllOnPage = () =>
+    setSelectedIds((prev) => {
+      const n = new Set(prev);
+      if (allOnPageSelected) users.forEach((u) => n.delete(u.id));
+      else users.forEach((u) => n.add(u.id));
+      return n;
+    });
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  // ─── Mutations ─────────────────────────────────────────────────
+  const setUserAdmin = async (userId: string, makeAdmin: boolean) => {
     const { error } = await supabase.rpc("set_user_admin", {
       p_user_id: userId, p_make_admin: makeAdmin,
     });
-    setBusy(null);
-    if (error) { toast.error(error.message); return; }
-    toast.success(makeAdmin ? "Granted admin" : "Removed admin");
-    setAdminIds((prev) => {
-      const next = new Set(prev);
-      if (makeAdmin) next.add(userId); else next.delete(userId);
-      return next;
-    });
+    if (error) throw new Error(error.message);
   };
 
-  const filtered = users.filter((u) => {
-    const q = search.trim().toLowerCase();
-    const matchesQuery = !q ||
-      u.name?.toLowerCase().includes(q) ||
-      u.email?.toLowerCase().includes(q) ||
-      u.course?.toLowerCase().includes(q);
-    if (!matchesQuery) return false;
-    if (showAdminsOnly && !adminIds.has(u.id)) return false;
-    return true;
-  });
+  const toggleAdmin = async (userId: string, makeAdmin: boolean) => {
+    if (!makeAdmin) {
+      const ok = confirm("Remove admin access from this account? They'll lose the dashboard immediately.");
+      if (!ok) return;
+    }
+    setBusy(userId);
+    try {
+      await setUserAdmin(userId, makeAdmin);
+      toast.success(makeAdmin ? "Granted admin" : "Removed admin");
+      setAdminIds((prev) => {
+        const n = new Set(prev);
+        if (makeAdmin) n.add(userId); else n.delete(userId);
+        return n;
+      });
+      setStats((s) => ({ ...s, admins: s.admins + (makeAdmin ? 1 : -1) }));
+    } catch (e: any) {
+      toast.error(e.message || "Couldn't update admin status");
+    } finally {
+      setBusy(null);
+    }
+  };
 
+  const bulkSetAdmin = async (ids: string[], makeAdmin: boolean) => {
+    if (ids.length === 0) return;
+    const label = makeAdmin ? "Grant admin to" : "Remove admin from";
+    const ok = confirm(`${label} ${ids.length} ${ids.length === 1 ? "user" : "users"}?`);
+    if (!ok) return;
+    setBusy("__bulk__");
+    let okCount = 0, failCount = 0;
+    for (const id of ids) {
+      try { await setUserAdmin(id, makeAdmin); okCount++; }
+      catch { failCount++; }
+    }
+    setBusy(null);
+    if (okCount) toast.success(`${makeAdmin ? "Granted" : "Removed"} admin · ${okCount}`);
+    if (failCount) toast.error(`${failCount} failed`);
+    setAdminIds((prev) => {
+      const n = new Set(prev);
+      ids.forEach((id) => makeAdmin ? n.add(id) : n.delete(id));
+      return n;
+    });
+    setStats((s) => ({ ...s, admins: s.admins + (makeAdmin ? okCount : -okCount) }));
+    clearSelection();
+  };
+
+  const copyEmail = (email: string | null) => {
+    if (!email) return;
+    navigator.clipboard?.writeText(email);
+    toast.success("Email copied");
+  };
+
+  // ─── Render ────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+      {/* ── Stats header ── */}
+      <div className="grid grid-cols-3 gap-3">
+        <UserStatCard icon={Users}        label="Total users"    value={stats.total}    tint="bg-primary/10 text-primary" />
+        <UserStatCard icon={ShieldCheck}  label="Admins"         value={stats.admins}   tint="bg-emerald-500/10 text-emerald-600" />
+        <UserStatCard icon={SparklesIcon} label="New this week"  value={stats.newWeek}  tint="bg-amber-500/10 text-amber-600" />
+      </div>
+
+      {/* ── Saved-view tabs ── */}
+      <Tabs value={view} onValueChange={(v) => setView(v as UsersView)}>
+        <TabsList className="rounded-xl">
+          <TabsTrigger value="all"    className="text-xs">All Users</TabsTrigger>
+          <TabsTrigger value="admins" className="text-xs">Admins</TabsTrigger>
+          <TabsTrigger value="new"    className="text-xs">New This Week</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {/* ── Search ── */}
+      <div className="relative">
+        <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/70" />
         <Input
           placeholder="Search by name, email, or course"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="h-10 rounded-xl flex-1"
+          className="h-10 rounded-xl pl-9"
         />
-        <Button
-          variant={showAdminsOnly ? "default" : "outline"}
-          size="sm"
-          onClick={() => setShowAdminsOnly((v) => !v)}
-          className="rounded-xl text-xs font-semibold"
-        >
-          <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />
-          Admins only ({adminIds.size})
-        </Button>
       </div>
 
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-        {filtered.map((u) => {
-          const isAdmin = adminIds.has(u.id);
-          const isSelf = me === u.id;
-          return (
-            <Card key={u.id}>
-              <CardContent className="p-4 space-y-2.5">
-                <div className="flex items-start gap-2.5">
-                  <Avatar className="h-9 w-9">
-                    <AvatarImage src={u.profile_picture || ""} />
-                    <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
-                      {u.name?.charAt(0).toUpperCase() || "?"}
+      {/* ── Contextual bulk-action bar ── */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-primary/8 border border-primary/20">
+          <span className="text-xs font-semibold text-primary">
+            {selectedIds.size} selected
+          </span>
+          <div className="flex-1" />
+          {selectedNonSelfNonAdmin.length > 0 && (
+            <Button
+              size="sm"
+              onClick={() => bulkSetAdmin(selectedNonSelfNonAdmin, true)}
+              disabled={busy === "__bulk__"}
+              className="h-7 rounded-lg text-[11px] font-semibold"
+            >
+              <UserPlus className="h-3 w-3 mr-1" />
+              Make admin ({selectedNonSelfNonAdmin.length})
+            </Button>
+          )}
+          {selectedNonSelfAdmin.length > 0 && (
+            <Button
+              size="sm" variant="outline"
+              onClick={() => bulkSetAdmin(selectedNonSelfAdmin, false)}
+              disabled={busy === "__bulk__"}
+              className="h-7 rounded-lg text-[11px] font-semibold border-red-500/30 text-red-600 hover:bg-red-500/5"
+            >
+              <UserMinus className="h-3 w-3 mr-1" />
+              Remove admin ({selectedNonSelfAdmin.length})
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={clearSelection} className="h-7 rounded-lg text-[11px]">
+            Clear
+          </Button>
+        </div>
+      )}
+
+      {/* ── Data table ── */}
+      <div className="rounded-xl border border-border/40 bg-card overflow-hidden">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader className="sticky top-0 z-10 bg-muted/40 backdrop-blur">
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={allOnPageSelected}
+                    onCheckedChange={toggleAllOnPage}
+                    aria-label="Select all on this page"
+                  />
+                </TableHead>
+                <TableHead className="w-12 text-[10px] uppercase tracking-wider font-bold">#</TableHead>
+                <TableHead className="text-[10px] uppercase tracking-wider font-bold">User</TableHead>
+                <TableHead className="text-[10px] uppercase tracking-wider font-bold hidden sm:table-cell">Role</TableHead>
+                <TableHead className="text-[10px] uppercase tracking-wider font-bold hidden md:table-cell">Joined</TableHead>
+                <TableHead className="w-12 text-right" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {users.map((u, i) => {
+                const isAdmin = adminIds.has(u.id);
+                const isSelf = me === u.id;
+                const rowNumber = page * pageSize + i + 1;
+                return (
+                  <TableRow
+                    key={u.id}
+                    className={cn(
+                      "cursor-pointer",
+                      selectedIds.has(u.id) && "bg-primary/5",
+                    )}
+                    onClick={(e) => {
+                      // Don't open the drawer when clicking checkbox or actions
+                      const target = e.target as HTMLElement;
+                      if (target.closest("[data-row-stop]")) return;
+                      setDrawerUser(u);
+                    }}
+                  >
+                    <TableCell data-row-stop onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedIds.has(u.id)}
+                        onCheckedChange={() => toggleOne(u.id)}
+                        aria-label={`Select ${u.name || u.email || "user"}`}
+                      />
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground font-mono">{rowNumber}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <Avatar className="h-8 w-8 flex-shrink-0">
+                          <AvatarImage src={u.profile_picture || ""} />
+                          <AvatarFallback className="bg-primary/10 text-primary text-[11px] font-bold">
+                            {u.name?.charAt(0).toUpperCase() || "?"}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-sm truncate">{u.name || "—"}</p>
+                          <p className="text-xs text-muted-foreground truncate">{u.email}</p>
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell">
+                      {isAdmin ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-primary/10 text-primary">
+                          <ShieldCheck className="h-2.5 w-2.5" />Admin
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-muted-foreground/60">Member</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground whitespace-nowrap">
+                      {format(new Date(u.created_at), "MMM d, yyyy")}
+                    </TableCell>
+                    <TableCell data-row-stop onClick={(e) => e.stopPropagation()} className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg" disabled={busy === u.id}>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-44">
+                          <DropdownMenuItem onClick={() => setDrawerUser(u)}>
+                            <Users className="h-3.5 w-3.5 mr-2" />
+                            View details
+                          </DropdownMenuItem>
+                          {u.email && (
+                            <DropdownMenuItem onClick={() => copyEmail(u.email)}>
+                              <Mail className="h-3.5 w-3.5 mr-2" />
+                              Copy email
+                            </DropdownMenuItem>
+                          )}
+                          {!isSelf && (
+                            <>
+                              <DropdownMenuSeparator />
+                              {isAdmin ? (
+                                <DropdownMenuItem onClick={() => toggleAdmin(u.id, false)} className="text-red-600 focus:text-red-600">
+                                  <UserMinus className="h-3.5 w-3.5 mr-2" />
+                                  Remove admin
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem onClick={() => toggleAdmin(u.id, true)}>
+                                  <UserPlus className="h-3.5 w-3.5 mr-2" />
+                                  Make admin
+                                </DropdownMenuItem>
+                              )}
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+
+              {!loading && users.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center py-8 text-sm text-muted-foreground">
+                    {debouncedSearch ? `No users match "${debouncedSearch}".` : "No users found."}
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* ── Pagination footer ── */}
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-border/40 bg-muted/20 flex-wrap">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            {loading ? (
+              <span className="inline-flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" />Loading…</span>
+            ) : (
+              <span>Showing <span className="font-semibold text-foreground">{startRow}–{endRow}</span> of <span className="font-semibold text-foreground">{totalCount.toLocaleString()}</span></span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className="text-muted-foreground">Per page</span>
+              <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v) as typeof PAGE_SIZE_OPTIONS[number]); setPage(0); }}>
+                <SelectTrigger className="h-7 w-16 rounded-lg text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <Button size="icon" variant="outline" className="h-7 w-7 rounded-lg"
+                onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0 || loading}>
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              <span className="text-xs font-semibold tabular-nums px-2">
+                {page + 1} / {totalPages}
+              </span>
+              <Button size="icon" variant="outline" className="h-7 w-7 rounded-lg"
+                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1 || loading}>
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── User detail drawer ── */}
+      <Sheet open={!!drawerUser} onOpenChange={(open) => { if (!open) setDrawerUser(null); }}>
+        <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto">
+          {drawerUser && (
+            <>
+              <SheetHeader className="text-left">
+                <SheetTitle>User details</SheetTitle>
+              </SheetHeader>
+              <div className="mt-4 space-y-5">
+                <div className="flex items-center gap-3">
+                  <Avatar className="h-16 w-16">
+                    <AvatarImage src={drawerUser.profile_picture || ""} />
+                    <AvatarFallback className="bg-primary/10 text-primary text-lg font-bold">
+                      {drawerUser.name?.charAt(0).toUpperCase() || "?"}
                     </AvatarFallback>
                   </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <p className="font-bold text-sm truncate">{u.name || "—"}</p>
-                      {isAdmin && (
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-bold text-base truncate">{drawerUser.name || "—"}</p>
+                      {adminIds.has(drawerUser.id) && (
                         <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-primary/10 text-primary inline-flex items-center gap-1">
                           <ShieldCheck className="h-2.5 w-2.5" />Admin
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground truncate">{u.email}</p>
-                    {u.course && <p className="text-[11px] text-muted-foreground/80 truncate">{u.course}</p>}
+                    <p className="text-xs text-muted-foreground truncate">{drawerUser.email}</p>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-border/30">
-                  <span className="text-[11px] text-muted-foreground">
-                    Rating {u.rating?.toFixed(1) ?? "—"}
-                  </span>
-                  {isSelf ? (
-                    <span className="text-[10px] text-muted-foreground/60 italic">that's you</span>
-                  ) : isAdmin ? (
-                    <Button
-                      onClick={() => toggleAdmin(u.id, false)}
-                      size="sm" variant="outline" disabled={busy === u.id}
-                      className="rounded-lg h-7 text-[11px] font-semibold border-red-500/30 text-red-600 hover:bg-red-500/5"
-                    >
-                      Remove admin
-                    </Button>
-                  ) : (
-                    <Button
-                      onClick={() => toggleAdmin(u.id, true)}
-                      size="sm" disabled={busy === u.id}
-                      className="rounded-lg h-7 text-[11px] font-semibold bg-primary hover:bg-primary/90"
-                    >
-                      Make admin
-                    </Button>
-                  )}
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <DetailField label="Course"  value={drawerUser.course} />
+                  <DetailField label="Rating"  value={drawerUser.rating != null ? drawerUser.rating.toFixed(1) : null} />
+                  <DetailField label="Joined"  value={format(new Date(drawerUser.created_at), "MMM d, yyyy")} />
+                  <DetailField label="User ID" value={drawerUser.id.slice(0, 8) + "…"} mono />
                 </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
 
-      {filtered.length === 0 && (
-        <p className="text-sm text-muted-foreground text-center py-8">
-          No users match the filter.
-        </p>
-      )}
+                {me !== drawerUser.id && (
+                  <div className="pt-2 border-t border-border/40 flex gap-2">
+                    {adminIds.has(drawerUser.id) ? (
+                      <Button
+                        onClick={() => toggleAdmin(drawerUser.id, false)}
+                        disabled={busy === drawerUser.id}
+                        variant="outline"
+                        className="flex-1 rounded-xl border-red-500/30 text-red-600 hover:bg-red-500/5"
+                      >
+                        <UserMinus className="h-3.5 w-3.5 mr-2" />
+                        Remove admin
+                      </Button>
+                    ) : (
+                      <Button
+                        onClick={() => toggleAdmin(drawerUser.id, true)}
+                        disabled={busy === drawerUser.id}
+                        className="flex-1 rounded-xl"
+                      >
+                        <UserPlus className="h-3.5 w-3.5 mr-2" />
+                        Make admin
+                      </Button>
+                    )}
+                    <Button variant="outline" onClick={() => copyEmail(drawerUser.email)} className="rounded-xl">
+                      <Mail className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 };
+
+/* Small helpers used by UsersTab — renamed to avoid clashing with the
+   dashboard's existing StatCard. */
+const UserStatCard = ({
+  icon: Icon, label, value, tint,
+}: { icon: typeof Users; label: string; value: number; tint: string }) => (
+  <div className="rounded-xl border border-border/40 bg-card p-3 flex items-center gap-2.5">
+    <div className={cn("h-8 w-8 rounded-lg flex items-center justify-center flex-shrink-0", tint)}>
+      <Icon className="h-4 w-4" />
+    </div>
+    <div className="min-w-0">
+      <p className="text-base sm:text-lg font-extrabold tabular-nums leading-none">{value.toLocaleString()}</p>
+      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold mt-0.5 truncate">{label}</p>
+    </div>
+  </div>
+);
+
+const DetailField = ({
+  label, value, mono = false,
+}: { label: string; value: string | null; mono?: boolean }) => (
+  <div className="rounded-lg bg-muted/30 p-2.5">
+    <p className="text-[9px] uppercase tracking-wider font-bold text-muted-foreground">{label}</p>
+    <p className={cn("text-xs font-semibold mt-1 break-all", mono && "font-mono")}>{value || "—"}</p>
+  </div>
+);
 
 export default Admin;
