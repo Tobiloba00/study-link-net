@@ -142,6 +142,17 @@ export const Navbar = () => {
               >
                 <Link to="/user-search"><Search className="h-[20px] w-[20px]" /></Link>
               </Button>
+              {isAdmin && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  asChild
+                  className="h-10 w-10 rounded-full hover:bg-muted text-foreground/80"
+                  aria-label="Admin dashboard"
+                >
+                  <Link to="/admin"><LayoutDashboard className="h-[20px] w-[20px]" /></Link>
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
