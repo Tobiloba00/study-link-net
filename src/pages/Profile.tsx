@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,7 +76,10 @@ type MyComment = {
 const Profile = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [profile, setProfile] = useState<any>(null);
+  const queryClient = useQueryClient();
+
+  // Form-input state (the editable fields). These mirror profile.* but
+  // are local so the user can type without affecting the cached row.
   const [name, setName] = useState("");
   const [course, setCourse] = useState("");
   const [bio, setBio] = useState("");
@@ -82,16 +87,15 @@ const Profile = () => {
   const [facultyId, setFacultyId] = useState<string>("");
   const [departmentId, setDepartmentId] = useState<string>("");
   const [level, setLevel] = useState<string>("");
+
+  // Lookup-table state — fetched lazily, only when the user opens the
+  // Edit Profile panel. Saves ~3 round-trips on cold mount.
   const [schools, setSchools] = useState<{ id: string; name: string }[]>([]);
   const [faculties, setFaculties] = useState<{ id: string; name: string }[]>([]);
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([]);
-  const [activePublisher, setActivePublisher] = useState<any>(null);
-  const [pendingApplication, setPendingApplication] = useState<any>(null);
-  const [reviews, setReviews] = useState<any[]>([]);
-  const [postCount, setPostCount] = useState(0);
+
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPanel, setSettingsPanel] = useState<Panel>(null);
   const [themePref, setThemePref] = useState<ThemePref>(() => {
@@ -107,12 +111,80 @@ const Profile = () => {
   const [myComments, setMyComments] = useState<MyComment[] | null>(null);
   const [tabLoading, setTabLoading] = useState(false);
 
+  /* ─── React Query: load everything for this page in ONE parallel
+     fetch — single getUser() call shared across the row + reviews +
+     post-count + admin + publisher queries.
+     staleTime 60s → re-visiting Profile within a minute is INSTANT
+     (returns cached data, revalidates silently in the background).
+  */
+  const PROFILE_KEY = ["profile-page"] as const;
+  const { data: pageData, isLoading: pageLoading } = useQuery({
+    queryKey: PROFILE_KEY,
+    queryFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        navigate("/auth");
+        return null;
+      }
+
+      const [
+        { data: profileRow },
+        { data: reviewsRow },
+        { count: postCountVal },
+        { data: adminRow },
+        { data: pub },
+        { data: app },
+      ] = await Promise.all([
+        supabase.from("profiles").select("*").eq("id", user.id).single(),
+        supabase
+          .from("reviews")
+          .select(`*, profiles!reviews_reviewer_id_fkey (name, profile_picture)`)
+          .eq("reviewed_user_id", user.id)
+          .order("created_at", { ascending: false }),
+        supabase.from("posts").select("id", { count: "exact", head: true }).eq("user_id", user.id),
+        supabase.from("user_roles").select("role").eq("user_id", user.id).eq("role", "admin").maybeSingle(),
+        supabase.from("publishers").select("*").eq("user_id", user.id).maybeSingle(),
+        supabase
+          .from("publisher_applications")
+          .select("*")
+          .eq("user_id", user.id)
+          .eq("status", "pending")
+          .maybeSingle(),
+      ]);
+
+      return {
+        user,
+        profile: profileRow,
+        reviews: reviewsRow || [],
+        postCount: postCountVal ?? 0,
+        isAdmin: !!adminRow,
+        activePublisher: pub,
+        pendingApplication: app,
+      };
+    },
+    staleTime: 60_000,
+  });
+
+  // Derived values used throughout the JSX
+  const profile           = pageData?.profile ?? null;
+  const reviews           = pageData?.reviews ?? [];
+  const postCount         = pageData?.postCount ?? 0;
+  const isAdmin           = pageData?.isAdmin ?? false;
+  const activePublisher   = pageData?.activePublisher ?? null;
+  const pendingApplication = pageData?.pendingApplication ?? null;
+
+  /* Hydrate the form-input fields when profile data first arrives or
+     when the cache is invalidated after a save. */
   useEffect(() => {
-    fetchProfile();
-    fetchReviews();
-    fetchStats();
-    checkAdmin();
-  }, []);
+    if (!profile) return;
+    setName(profile.name || "");
+    setCourse(profile.course || "");
+    setBio(profile.bio || "");
+    setSchoolId(profile.school_id || "");
+    setFacultyId(profile.faculty_id || "");
+    setDepartmentId(profile.department_id || "");
+    setLevel(profile.level ? String(profile.level) : "");
+  }, [profile]);
 
   // Re-apply theme whenever the preference changes
   useEffect(() => {
@@ -135,82 +207,35 @@ const Profile = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
-  const fetchProfile = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      navigate("/auth");
-      return;
-    }
-    const { data } = await supabase.from("profiles").select("*").eq("id", user.id).single();
-    if (data) {
-      setProfile(data);
-      setName(data.name || "");
-      setCourse(data.course || "");
-      setBio(data.bio || "");
-      setSchoolId(data.school_id || "");
-      setFacultyId(data.faculty_id || "");
-      setDepartmentId(data.department_id || "");
-      setLevel(data.level ? String(data.level) : "");
-    }
-
-    // Load lookup tables for the academic dropdowns
-    const { data: ss } = await supabase.from("schools").select("id, name").order("name");
-    setSchools(ss || []);
-
-    // Publisher state — drives the "Become a publisher" CTA copy
-    const [{ data: pub }, { data: app }] = await Promise.all([
-      supabase.from("publishers").select("*").eq("user_id", user.id).maybeSingle(),
-      supabase.from("publisher_applications").select("*")
-        .eq("user_id", user.id).eq("status", "pending").maybeSingle(),
-    ]);
-    setActivePublisher(pub);
-    setPendingApplication(app);
-  };
-
-  // Cascade: when school/faculty changes, reload children
+  /* Lazy load the academic dropdown options — only when the Edit
+     Profile panel is open. Skips ~3 round-trips on every Profile mount
+     for users who aren't editing right now. */
   useEffect(() => {
+    if (settingsPanel !== "edit") return;
+    if (schools.length > 0) return; // already loaded
+    supabase
+      .from("schools")
+      .select("id, name")
+      .order("name")
+      .then(({ data }) => setSchools(data || []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsPanel]);
+
+  // Cascade: faculties (only when editing + a school is picked)
+  useEffect(() => {
+    if (settingsPanel !== "edit") return;
     if (!schoolId) { setFaculties([]); return; }
     supabase.from("faculties").select("id, name").eq("school_id", schoolId).order("name")
       .then(({ data }) => setFaculties(data || []));
-  }, [schoolId]);
+  }, [schoolId, settingsPanel]);
+
+  // Cascade: departments (only when editing + a faculty is picked)
   useEffect(() => {
+    if (settingsPanel !== "edit") return;
     if (!facultyId) { setDepartments([]); return; }
     supabase.from("departments").select("id, name").eq("faculty_id", facultyId).order("name")
       .then(({ data }) => setDepartments(data || []));
-  }, [facultyId]);
-
-  const fetchReviews = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    const { data } = await supabase
-      .from("reviews")
-      .select(`*, profiles!reviews_reviewer_id_fkey (name, profile_picture)`)
-      .eq("reviewed_user_id", user.id)
-      .order("created_at", { ascending: false });
-    setReviews(data || []);
-  };
-
-  const fetchStats = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    const { count } = await supabase
-      .from("posts")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id);
-    setPostCount(count || 0);
-  };
-
-  const checkAdmin = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    const { data } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", user.id)
-      .eq("role", "admin")
-      .maybeSingle();
-    setIsAdmin(!!data);
-  };
+  }, [facultyId, settingsPanel]);
 
   const loadMyPosts = async () => {
     setTabLoading(true);
@@ -306,7 +331,8 @@ const Profile = () => {
         .eq("id", user.id);
       if (error) throw error;
       toast.success("Profile updated!");
-      fetchProfile();
+      // Invalidate the cached page data → next render uses fresh row
+      queryClient.invalidateQueries({ queryKey: PROFILE_KEY });
       setSelectedImage(null);
       setSettingsPanel(null);
     } catch (error: any) {
@@ -381,20 +407,32 @@ const Profile = () => {
       </header>
 
       <div className="max-w-xl mx-auto px-5 pb-32 lg:pt-[88px] lg:pb-12">
-        {/* Hero */}
+        {/* Hero — skeleton while the first-load query resolves, real
+            content once it does (and on every revisit, cached so it
+            appears instantly). */}
         <section className="pt-6 pb-6 flex flex-col items-center text-center">
-          <Avatar className="h-24 w-24 ring-4 ring-background shadow-md">
-            <AvatarImage src={profile?.profile_picture || ""} className="object-cover" />
-            <AvatarFallback className="text-2xl bg-gradient-primary text-primary-foreground font-bold">
-              {name.charAt(0).toUpperCase() || "?"}
-            </AvatarFallback>
-          </Avatar>
-          <h2 className="text-[22px] font-bold tracking-tight mt-4">{name || "Your Name"}</h2>
-          {course && <p className="text-sm text-muted-foreground mt-0.5">{course}</p>}
-          {bio && (
-            <p className="text-[13px] text-muted-foreground/80 mt-2 max-w-xs leading-relaxed">
-              {bio}
-            </p>
+          {pageLoading && !profile ? (
+            <>
+              <Skeleton className="h-24 w-24 rounded-full" />
+              <Skeleton className="h-6 w-44 mt-4 rounded-md" />
+              <Skeleton className="h-4 w-32 mt-2 rounded-md" />
+            </>
+          ) : (
+            <>
+              <Avatar className="h-24 w-24 ring-4 ring-background shadow-md">
+                <AvatarImage src={profile?.profile_picture || ""} className="object-cover" />
+                <AvatarFallback className="text-2xl bg-gradient-primary text-primary-foreground font-bold">
+                  {name.charAt(0).toUpperCase() || "?"}
+                </AvatarFallback>
+              </Avatar>
+              <h2 className="text-[22px] font-bold tracking-tight mt-4">{name || "Your Name"}</h2>
+              {course && <p className="text-sm text-muted-foreground mt-0.5">{course}</p>}
+              {bio && (
+                <p className="text-[13px] text-muted-foreground/80 mt-2 max-w-xs leading-relaxed">
+                  {bio}
+                </p>
+              )}
+            </>
           )}
 
           {/* Edit / Settings buttons (desktop) */}
@@ -423,14 +461,24 @@ const Profile = () => {
           </div>
         </section>
 
-        {/* Stats */}
+        {/* Stats — skeleton bars while loading, real numbers once cached */}
         <section className="grid grid-cols-3 gap-2 pb-5 border-b border-border/40">
-          <Stat value={postCount} label="Posts" />
-          <Stat value={reviews.length} label="Reviews" divider />
-          <Stat
-            value={profile?.rating != null ? Number(profile.rating).toFixed(1) : "—"}
-            label="Rating"
-          />
+          {pageLoading && !profile ? (
+            <>
+              <div className="flex flex-col items-center gap-1.5"><Skeleton className="h-6 w-8 rounded-md" /><Skeleton className="h-3 w-10 rounded-md" /></div>
+              <div className="flex flex-col items-center gap-1.5 border-x border-border/40"><Skeleton className="h-6 w-8 rounded-md" /><Skeleton className="h-3 w-10 rounded-md" /></div>
+              <div className="flex flex-col items-center gap-1.5"><Skeleton className="h-6 w-8 rounded-md" /><Skeleton className="h-3 w-10 rounded-md" /></div>
+            </>
+          ) : (
+            <>
+              <Stat value={postCount} label="Posts" />
+              <Stat value={reviews.length} label="Reviews" divider />
+              <Stat
+                value={profile?.rating != null ? Number(profile.rating).toFixed(1) : "—"}
+                label="Rating"
+              />
+            </>
+          )}
         </section>
 
         {/* Tabs */}
