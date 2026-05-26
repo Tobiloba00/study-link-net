@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
@@ -54,9 +55,13 @@ type SmartFilter = 'urgent' | 'my-dept' | 'low-budget' | null;
 type TrendingTag = { tag: string; count: number; score?: number };
 type TopHelper = { id: string; name: string; rating: number; profile_picture: string | null };
 
+/* Query keys — centralised so realtime handlers & manual invalidation
+   reference the same cache slot. */
+const QK_FEED_POSTS = (filter: string) => ["feed-posts", filter] as const;
+
 const Feed = () => {
   const navigate = useNavigate();
-  const [posts, setPosts] = useState<Post[]>([]);
+  const queryClient = useQueryClient();
   const [filter, setFilter] = useState("all"); // category filter
   const [smartFilter, setSmartFilter] = useState<SmartFilter>(null); // urgent / my-dept / low-budget
   const [user, setUser] = useState<any>(null);
@@ -65,7 +70,6 @@ const Feed = () => {
   const [lastSeenPostId, setLastSeenPostId] = useState<string | null>(null);
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
   const [likeCounts, setLikeCounts] = useState<Record<string, number>>({});
-  const [isLoading, setIsLoading] = useState(true);
   const [trendingTags, setTrendingTags] = useState<TrendingTag[]>([]);
   const [topHelpers, setTopHelpers] = useState<TopHelper[]>([]);
   // null = unknown (don't render hero yet to avoid flash for established users)
@@ -86,40 +90,58 @@ const Feed = () => {
     return () => subscription.unsubscribe();
   }, [navigate]);
 
-  // ─── Data fetching ───
-  const fetchPosts = useCallback(async () => {
-    setIsLoading(true);
-    let query = supabase
-      .from('posts')
-      .select('id, title, description, category, optional_price, ai_summary, image_url, created_at, user_id, tags, campus_highlight, engagement_count, due_date, profiles (name, rating, profile_picture, course), comments(count)')
-      .order('created_at', { ascending: false });
+  // ─── React Query: the main posts feed ───
+  // Cached by filter so toggling categories is also instant on re-toggle.
+  // staleTime 60s means navigating away and back within a minute is INSTANT
+  // (returns cached data) with a quiet background revalidate.
+  const {
+    data: posts = [],
+    isLoading: isPostsLoading,
+    refetch: refetchPosts,
+  } = useQuery({
+    queryKey: QK_FEED_POSTS(filter),
+    queryFn: async (): Promise<Post[]> => {
+      let query = supabase
+        .from("posts")
+        .select(
+          "id, title, description, category, optional_price, ai_summary, image_url, created_at, user_id, tags, campus_highlight, engagement_count, due_date, profiles (name, rating, profile_picture, course), comments(count)",
+        )
+        .order("created_at", { ascending: false });
 
-    if (filter !== "all") {
-      query = query.eq('category', filter as any);
-    }
+      if (filter !== "all") query = query.eq("category", filter as any);
 
-    const { data, error } = await query;
-    if (error) { toast.error("Failed to load posts"); setIsLoading(false); return; }
+      const { data, error } = await query;
+      if (error) { toast.error("Failed to load posts"); throw error; }
 
-    const formatted = data?.map(post => ({
-      ...post,
-      comment_count: (post as any).comments?.[0]?.count || 0
-    }));
+      const formatted = (data || []).map((post: any) => ({
+        ...post,
+        comment_count: post.comments?.[0]?.count || 0,
+      })) as Post[];
 
-    setPosts(formatted || []);
-
-    if (data && data.length > 0) {
-      const postIds = data.map(p => p.id);
-      const { data: likesData } = await supabase.from('post_likes').select('post_id').in('post_id', postIds);
-      if (likesData) {
-        const counts: Record<string, number> = {};
-        likesData.forEach(like => { counts[like.post_id] = (counts[like.post_id] || 0) + 1; });
-        setLikeCounts(counts);
+      // Piggy-back the per-post like counts on this same fetch — saves a
+      // round-trip and keeps it bound to the cached result.
+      if (formatted.length > 0) {
+        const postIds = formatted.map((p) => p.id);
+        const { data: likesData } = await supabase
+          .from("post_likes")
+          .select("post_id")
+          .in("post_id", postIds);
+        if (likesData) {
+          const counts: Record<string, number> = {};
+          likesData.forEach((l: any) => {
+            counts[l.post_id] = (counts[l.post_id] || 0) + 1;
+          });
+          setLikeCounts(counts);
+        }
+        setLastSeenPostId(formatted[0].id);
       }
-      setLastSeenPostId(data[0].id);
-    }
-    setIsLoading(false);
-  }, [filter]); // Removed likedPosts dependency — was causing cascade refetches
+      return formatted;
+    },
+    staleTime: 60_000, // 60s — return cached data on re-mount, revalidate in bg
+    enabled: !!user,
+  });
+
+  const isLoading = isPostsLoading;
 
   const fetchUserLikes = useCallback(async () => {
     if (!user) return;
@@ -189,18 +211,18 @@ const Feed = () => {
 
   useEffect(() => {
     if (!user) return;
-    fetchPosts();
+    // Posts are handled by useQuery now. These smaller fetches stay manual for now.
     fetchUserLikes();
     fetchUserCourse();
     fetchMyPostCount();
     fetchTrendingTags();
     fetchTopHelpers();
-  }, [user, fetchPosts, fetchUserLikes, fetchUserCourse, fetchMyPostCount, fetchTrendingTags, fetchTopHelpers]);
+  }, [user, fetchUserLikes, fetchUserCourse, fetchMyPostCount, fetchTrendingTags, fetchTopHelpers]);
 
   // ─── Pull to Refresh ───
   const handlePullRefresh = useCallback(async () => {
-    await Promise.all([fetchPosts(), fetchTrendingTags(), fetchTopHelpers()]);
-  }, [fetchPosts, fetchTrendingTags, fetchTopHelpers]);
+    await Promise.all([refetchPosts(), fetchTrendingTags(), fetchTopHelpers()]);
+  }, [refetchPosts, fetchTrendingTags, fetchTopHelpers]);
 
   const { pullDistance, isRefreshing, progress, isReady } = usePullToRefresh({
     onRefresh: handlePullRefresh,
@@ -216,14 +238,12 @@ const Feed = () => {
 
     const channel = supabase
       .channel('feed-realtime')
-      // ── posts INSERT ──
+      // ── posts INSERT — patch the React Query cache so the new post shows up live ──
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'posts' },
         async (payload) => {
           const newId = (payload.new as any).id;
-          // Skip if we already have it locally (e.g. user just created it)
-          setPosts((current) => current.find((p) => p.id === newId) ? current : current);
 
           // Re-fetch the full row with profile join + comment count
           const { data } = await supabase
@@ -233,11 +253,11 @@ const Feed = () => {
             .single();
           if (!data) return;
           const enriched = {
-            ...data,
+            ...(data as any),
             comment_count: (data as any).comments?.[0]?.count || 0,
           } as Post;
 
-          setPosts((current) => {
+          queryClient.setQueryData<Post[]>(QK_FEED_POSTS(filter), (current = []) => {
             if (current.find((p) => p.id === newId)) return current;
             return [enriched, ...current];
           });
@@ -245,24 +265,26 @@ const Feed = () => {
           if (enriched.user_id === user.id) setMyPostCount((c) => (c ?? 0) + 1);
         }
       )
-      // ── posts UPDATE — patch fields in place (e.g. status, due_date, image) ──
+      // ── posts UPDATE — patch fields in place via cache ──
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'posts' },
         (payload) => {
           const updated = payload.new as any;
-          setPosts((current) =>
+          queryClient.setQueryData<Post[]>(QK_FEED_POSTS(filter), (current = []) =>
             current.map((p) => (p.id === updated.id ? { ...p, ...updated } : p))
           );
         }
       )
-      // ── posts DELETE — remove from local state, no full re-fetch ──
+      // ── posts DELETE — remove from cache ──
       .on(
         'postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'posts' },
         (payload) => {
           const deletedId = (payload.old as any).id;
-          setPosts((current) => current.filter((p) => p.id !== deletedId));
+          queryClient.setQueryData<Post[]>(QK_FEED_POSTS(filter), (current = []) =>
+            current.filter((p) => p.id !== deletedId)
+          );
           if ((payload.old as any).user_id === user.id) {
             setMyPostCount((c) => (c != null ? Math.max(0, c - 1) : c));
           }
@@ -312,7 +334,10 @@ const Feed = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user]);
+    // queryClient & filter included because the cache writes target a
+    // filter-scoped key — if the user switches category, the realtime
+    // channel needs to write into the right cache slot.
+  }, [user, queryClient, filter]);
 
   // ─── Handlers ───
   const toggleLike = useCallback(async (postId: string, e: React.MouseEvent) => {
@@ -355,8 +380,15 @@ const Feed = () => {
     if (!confirm("Delete this post?")) return;
     const { error } = await supabase.from('posts').delete().eq('id', postId).eq('user_id', user.id);
     if (error) toast.error("Failed to delete post");
-    else { toast.success("Post deleted"); fetchPosts(); }
-  }, [user, fetchPosts]);
+    else {
+      toast.success("Post deleted");
+      // Optimistic removal from cache — realtime DELETE will arrive too, but
+      // doing it eagerly avoids any visible delay between click and removal.
+      queryClient.setQueryData<Post[]>(QK_FEED_POSTS(filter), (current = []) =>
+        current.filter((p) => p.id !== postId),
+      );
+    }
+  }, [user, queryClient, filter]);
 
   // ─── Smart Ranking Algorithm v2 ───
   // Uses exponential time decay, logarithmic engagement, Bayesian rating confidence,
