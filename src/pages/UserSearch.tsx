@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -12,11 +12,14 @@ import {
   Loader2,
   UserPlus,
   ArrowRight,
+  X,
 } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import BottomNav from "@/components/BottomNav";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useRecentSearches } from "@/hooks/useRecentSearches";
+import SearchOverlay from "@/components/search/SearchOverlay";
 
 interface Profile {
   id: string;
@@ -66,9 +69,22 @@ const FILTERS: { key: FilterKey; label: string }[] = [
 const PAGE_SIZE = 20;
 const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
+type ResultsTab = "top" | "latest" | "people";
+
+const isMobileViewport = () =>
+  typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+
 const UserSearch = () => {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  /* ─── Twitter-style search state model
+       searchInput  → controlled value in the visible <input>. Drives the
+                      overlay (State 2/3) ONLY. Does not refetch the list.
+       submittedQuery → comes from URL ?q=, drives the list (State 4).
+       isFocused    → input focused but not yet submitted; shows overlay.
+     ─── */
+  const [searchInput, setSearchInput] = useState("");
+  const [isFocused, setIsFocused] = useState(false);
+  const [resultsTab, setResultsTab] = useState<ResultsTab>("people");
+
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [popular, setPopular] = useState<Profile[]>([]);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -76,7 +92,39 @@ const UserSearch = () => {
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const overlayRootRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const submittedQuery = (searchParams.get("q") || "").trim();
+  const isResultsMode = submittedQuery.length > 0;
+
+  /* Track viewport so the overlay knows which layout to render */
+  const [isMobile, setIsMobile] = useState(isMobileViewport);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener?.("change", handler);
+    return () => mq.removeEventListener?.("change", handler);
+  }, []);
+
+  /* Recent searches (localStorage, max 5) */
+  const recent = useRecentSearches();
+
+  /* Trending searches — derived from the most common skills/courses in
+     the popular set. Cheap, in-memory, no extra DB call. */
+  const trending = useMemo(() => {
+    const counts = new Map<string, number>();
+    popular.forEach((p) => {
+      p.skills?.forEach((s) => s && counts.set(s, (counts.get(s) || 0) + 1));
+      if (p.course) counts.set(p.course, (counts.get(p.course) || 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([k]) => k);
+  }, [popular]);
 
   /* ─── Auth + the small "Popular on Campus" set (top 10 by rating) ─── */
   useEffect(() => {
@@ -93,47 +141,53 @@ const UserSearch = () => {
     })();
   }, []);
 
-  /* ─── Debounce the search input ─── */
+  /* When URL ?q= changes, mirror it into the visible input (so the user
+     sees their submitted query). Also reset the tab to People. */
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
-    return () => clearTimeout(t);
-  }, [searchQuery]);
+    setSearchInput(submittedQuery);
+    if (isResultsMode) setResultsTab("people");
+  }, [submittedQuery, isResultsMode]);
 
-  /* ─── Build query (shared by initial fetch + infinite scroll) ─── */
+  /* ─── Build query — driven by submittedQuery (URL) in results mode, by
+         the filter pills in idle mode. The visible <input> never affects
+         the list directly; submission does. ─── */
   const buildQuery = useCallback(() => {
     let q = supabase
       .from("profiles")
       .select("id, name, course, year_of_study, skills, bio, profile_picture, rating, created_at");
 
-    // Order depends on filter
-    if (activeFilter === "top") {
-      q = q.order("rating", { ascending: false });
-    } else if (activeFilter === "recent") {
+    /* Sort:
+        Results mode + tab=latest → by created_at
+        Results mode + tab=top    → by rating
+        Idle filter = recent      → by created_at
+        Everything else           → by rating
+    */
+    if ((isResultsMode && resultsTab === "latest") || activeFilter === "recent") {
       q = q.order("created_at", { ascending: false });
     } else {
       q = q.order("rating", { ascending: false });
     }
 
-    if (debouncedSearch) {
-      const term = debouncedSearch.replace(/[%_]/g, "\\$&");
-      q = q.or(
-        `name.ilike.%${term}%,course.ilike.%${term}%,bio.ilike.%${term}%`,
-      );
+    if (submittedQuery) {
+      const term = submittedQuery.replace(/[%_]/g, "\\$&");
+      q = q.or(`name.ilike.%${term}%,course.ilike.%${term}%,bio.ilike.%${term}%`);
     }
 
-    if (activeFilter === "recent") {
-      const ago = new Date(Date.now() - MONTH_MS).toISOString();
-      q = q.gte("created_at", ago);
-    } else if (activeFilter.startsWith("y") && activeFilter !== "all") {
-      const map: Record<string, string> = {
-        y100: "100", y200: "200", y300: "300", y400: "400", yfinal: "Final",
-      };
-      const prefix = map[activeFilter];
-      if (prefix) q = q.ilike("year_of_study", `${prefix}%`);
+    if (!isResultsMode) {
+      if (activeFilter === "recent") {
+        const ago = new Date(Date.now() - MONTH_MS).toISOString();
+        q = q.gte("created_at", ago);
+      } else if (activeFilter.startsWith("y") && activeFilter !== "all") {
+        const map: Record<string, string> = {
+          y100: "100", y200: "200", y300: "300", y400: "400", yfinal: "Final",
+        };
+        const prefix = map[activeFilter];
+        if (prefix) q = q.ilike("year_of_study", `${prefix}%`);
+      }
     }
 
     return q;
-  }, [activeFilter, debouncedSearch]);
+  }, [activeFilter, submittedQuery, isResultsMode, resultsTab]);
 
   /* ─── Reset + initial fetch when filters change ─── */
   useEffect(() => {
@@ -192,82 +246,169 @@ const UserSearch = () => {
     } catch { /* user cancelled */ }
   };
 
-  const hasActiveFilter = debouncedSearch.length > 0 || activeFilter !== "all";
+  const hasActiveFilter = submittedQuery.length > 0 || activeFilter !== "all";
   const popularToShow = popular.filter((p) => p.id !== currentUser?.id).slice(0, 10);
+
+  /* ─── Search submit / clear / overlay actions ─── */
+  const handleSubmit = (rawQuery: string) => {
+    const q = rawQuery.trim();
+    if (!q) {
+      // Empty submit → just close overlay, clear URL if present
+      setIsFocused(false);
+      if (submittedQuery) setSearchParams({}, { replace: true });
+      inputRef.current?.blur();
+      return;
+    }
+    recent.push(q);
+    setIsFocused(false);
+    setSearchInput(q);
+    setSearchParams({ q }, { replace: false });
+    inputRef.current?.blur();
+  };
+
+  const handleGoToProfile = (userId: string) => {
+    setIsFocused(false);
+    inputRef.current?.blur();
+    navigate(`/profile?userId=${userId}`);
+  };
+
+  const handleClearInput = () => {
+    setSearchInput("");
+    if (submittedQuery) setSearchParams({}, { replace: true });
+    inputRef.current?.focus();
+  };
+
+  /* Close overlay when clicking outside it (desktop) */
+  useEffect(() => {
+    if (!isFocused || isMobile) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!overlayRootRef.current?.contains(e.target as Node)) setIsFocused(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [isFocused, isMobile]);
 
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
       <div className="max-w-2xl lg:max-w-3xl mx-auto px-4 sm:px-5 pt-[calc(env(safe-area-inset-top,0px)+76px)] pb-32 lg:pb-12">
-        {/* ─── Hero ─── */}
-        <div className="flex items-start justify-between gap-3 mb-6 animate-hero">
-          <div className="flex-1 min-w-0 pt-1">
-            <h1 className="text-[34px] sm:text-[40px] font-extrabold tracking-tight leading-[1.05] mb-2">
-              Find People
-            </h1>
-            <p className="text-sm sm:text-[15px] text-muted-foreground leading-relaxed max-w-sm">
-              Connect and collaborate with students on campus.
-            </p>
+        {/* ─── Hero — hidden in results mode so the search has full focus ─── */}
+        {!isResultsMode && (
+          <div className="flex items-start justify-between gap-3 mb-6 animate-hero">
+            <div className="flex-1 min-w-0 pt-1">
+              <h1 className="text-[34px] sm:text-[40px] font-extrabold tracking-tight leading-[1.05] mb-2">
+                Find People
+              </h1>
+              <p className="text-sm sm:text-[15px] text-muted-foreground leading-relaxed max-w-sm">
+                Connect and collaborate with students on campus.
+              </p>
+            </div>
+            <FindPeopleArtwork />
           </div>
-          <FindPeopleArtwork />
-        </div>
+        )}
 
-        {/* ─── Search bar ─── */}
-        <div className="relative bg-card rounded-2xl border border-border/50 shadow-sm mb-3">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-          <Input
-            type="text"
-            placeholder="Search by name, course, or bio…"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-11 h-12 bg-transparent border-none focus-visible:ring-0 text-sm"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-muted-foreground hover:text-foreground transition-colors px-2"
-              aria-label="Clear search"
-            >
-              Clear
-            </button>
+        {/* ─── Search bar + overlay anchor ─── */}
+        <div ref={overlayRootRef} className="relative mb-3">
+          <div className="relative bg-card rounded-2xl border border-border/50 shadow-sm">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              ref={inputRef}
+              type="text"
+              placeholder="Search by name, course, or bio…"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onFocus={() => setIsFocused(true)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSubmit(searchInput);
+                if (e.key === "Escape") { setIsFocused(false); inputRef.current?.blur(); }
+              }}
+              className="pl-11 pr-9 h-12 bg-transparent border-none focus-visible:ring-0 text-sm"
+            />
+            {searchInput && (
+              <button
+                onClick={handleClearInput}
+                className="absolute right-3 top-1/2 -translate-y-1/2 h-6 w-6 rounded-full hover:bg-muted flex items-center justify-center text-muted-foreground"
+                aria-label="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* States 2 & 3 — overlay panel */}
+          {isFocused && (
+            <SearchOverlay
+              query={searchInput}
+              recent={recent.items}
+              onRecentRemove={recent.remove}
+              onRecentClear={recent.clear}
+              trending={trending}
+              onSubmit={handleSubmit}
+              onGoToProfile={handleGoToProfile}
+              onMessage={handleMessage}
+              onCancel={() => { setIsFocused(false); setSearchInput(submittedQuery); inputRef.current?.blur(); }}
+              isMobile={isMobile}
+            />
           )}
         </div>
 
-        {/* ─── Filter pills — horizontally scrollable ─── */}
-        <div className="flex items-center gap-2 mb-6 overflow-x-auto scrollbar-hide -mx-4 px-4 pb-1">
-          {FILTERS.map((f) => (
-            <FilterPill
-              key={f.key}
-              active={activeFilter === f.key}
-              onClick={() => setActiveFilter(f.key)}
-            >
-              {f.label}
-            </FilterPill>
-          ))}
-        </div>
-
-        {/* ─── "Popular on Campus" horizontal scroll
-             Only shown when there's no search or filter active. ─── */}
-        {!hasActiveFilter && popularToShow.length > 0 && (
-          <section className="mb-6">
-            <h2 className="text-base font-bold tracking-tight mb-3">Popular on Campus</h2>
-            <div className="flex gap-3 overflow-x-auto -mx-4 px-4 scrollbar-hide pb-2">
-              {popularToShow.map((p) => (
-                <PopularCard
-                  key={p.id}
-                  profile={p}
-                  onMessage={() => handleMessage(p.id)}
-                />
+        {/* ─── State 4 (results mode): Top / Latest / People tabs ─── */}
+        {isResultsMode ? (
+          <div className="flex items-center gap-2 mb-4 border-b border-border/40">
+            {(["top", "latest", "people"] as ResultsTab[]).map((t) => (
+              <button
+                key={t}
+                onClick={() => setResultsTab(t)}
+                className={cn(
+                  "px-3 py-2 text-sm font-semibold capitalize transition-colors relative",
+                  resultsTab === t ? "text-primary" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {t}
+                {resultsTab === t && (
+                  <span className="absolute left-0 right-0 bottom-[-1px] h-0.5 bg-primary rounded-t-full" />
+                )}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <>
+            {/* ─── Filter pills — only in idle mode ─── */}
+            <div className="flex items-center gap-2 mb-6 overflow-x-auto scrollbar-hide -mx-4 px-4 pb-1">
+              {FILTERS.map((f) => (
+                <FilterPill
+                  key={f.key}
+                  active={activeFilter === f.key}
+                  onClick={() => setActiveFilter(f.key)}
+                >
+                  {f.label}
+                </FilterPill>
               ))}
             </div>
-          </section>
+
+            {/* ─── "Popular on Campus" horizontal scroll — idle mode only ─── */}
+            {!hasActiveFilter && popularToShow.length > 0 && (
+              <section className="mb-6">
+                <h2 className="text-base font-bold tracking-tight mb-3">Popular on Campus</h2>
+                <div className="flex gap-3 overflow-x-auto -mx-4 px-4 scrollbar-hide pb-2">
+                  {popularToShow.map((p) => (
+                    <PopularCard
+                      key={p.id}
+                      profile={p}
+                      onMessage={() => handleMessage(p.id)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+          </>
         )}
 
         {/* ─── Section header ─── */}
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-base font-bold tracking-tight">
-            {debouncedSearch
-              ? "Results"
+            {isResultsMode
+              ? `Results for "${submittedQuery}"`
               : activeFilter === "all"
                 ? "All Students"
                 : FILTERS.find((f) => f.key === activeFilter)?.label}
@@ -356,7 +497,7 @@ const UserSearch = () => {
             </div>
             <p className="font-semibold mb-1">No users found</p>
             <p className="text-sm text-muted-foreground">
-              {debouncedSearch ? `Try a different search term` : "Try another filter"}
+              {submittedQuery ? `Try a different search term` : "Try another filter"}
             </p>
           </div>
         )}
