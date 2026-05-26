@@ -68,20 +68,29 @@ export const SearchOverlay = ({
   const cleanedQuery = useMemo(() => query.replace(/^@+/, "").trim(), [query]);
   const isHandleQuery = query.trim().startsWith("@");
 
-  /* ─── Debounced server-side typeahead ─── */
+  /* ─── Debounced server-side typeahead ───
+       300ms debounce + request-id guard (drops stale client-side) +
+       AbortController so the in-flight HTTP request is cancelled
+       server-side too when the user keeps typing. Only the columns
+       actually shown go in the SELECT, and the OR is restricted to
+       `name` + `course` (both backed by trigram GIN indexes per
+       migration 20260526100000). `bio` is dropped — wide text column,
+       low match probability for 1–4 char typeahead terms. */
   useEffect(() => {
     if (!cleanedQuery) { setResults([]); setSearching(false); return; }
     const id = ++reqIdRef.current;
+    const controller = new AbortController();
     setSearching(true);
 
     const t = setTimeout(async () => {
       const term = cleanedQuery.replace(/[%_]/g, "\\$&");
       const { data } = await supabase
         .from("profiles")
-        .select("id, name, course, year_of_study, profile_picture, rating")
-        .or(`name.ilike.%${term}%,course.ilike.%${term}%,bio.ilike.%${term}%`)
+        .select("id, name, course, year_of_study, profile_picture")
+        .or(`name.ilike.%${term}%,course.ilike.%${term}%`)
         .order("rating", { ascending: false })
-        .limit(MAX_RESULTS);
+        .limit(MAX_RESULTS)
+        .abortSignal(controller.signal);
 
       // Drop stale responses if the user typed more characters since
       if (id !== reqIdRef.current) return;
@@ -89,7 +98,10 @@ export const SearchOverlay = ({
       setSearching(false);
     }, DEBOUNCE_MS);
 
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      controller.abort();
+    };
   }, [cleanedQuery]);
 
   /* ─── Exact-name match → "Go to {name}" shortcut row ─── */

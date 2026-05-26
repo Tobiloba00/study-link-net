@@ -169,8 +169,10 @@ const UserSearch = () => {
     }
 
     if (submittedQuery) {
+      // Only index-backed columns — trigram GIN on (name, course).
+      // Dropped bio.ilike: wide text column, low match probability.
       const term = submittedQuery.replace(/[%_]/g, "\\$&");
-      q = q.or(`name.ilike.%${term}%,course.ilike.%${term}%,bio.ilike.%${term}%`);
+      q = q.or(`name.ilike.%${term}%,course.ilike.%${term}%`);
     }
 
     if (!isResultsMode) {
