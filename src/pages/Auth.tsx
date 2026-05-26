@@ -12,7 +12,7 @@ import {
   ArrowRight, ArrowLeft, BookOpen, MessageSquare, Star, Eye, EyeOff, Mail, ShieldCheck,
   User as UserIcon, Building2,
 } from "lucide-react";
-import { Logo } from "@/components/Logo";
+import { Logo, LogoMark } from "@/components/Logo";
 import { track } from "@/lib/analytics";
 import { usePageMeta } from "@/hooks/usePageMeta";
 import { cn } from "@/lib/utils";
@@ -367,18 +367,34 @@ const Auth = () => {
       </div>
 
       {/* Right Panel — Auth Form */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-4 sm:p-8 relative">
+      {/* Mobile layout: logo pinned at top, form vertically centered in
+          the remaining space (so neither collides with the other and
+          there's no big gap at the bottom).
+          Desktop: unchanged centered split-screen layout. */}
+      <div
+        className="w-full lg:w-1/2 flex flex-col items-stretch lg:items-center justify-start lg:justify-center min-h-[100dvh] lg:min-h-0 p-4 sm:p-8 lg:pt-8 relative"
+        style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 1rem)" }}
+      >
         <div className="mesh-background" />
 
-        {/* Mobile logo */}
+        {/* Mobile logo — inline at the top */}
         <button
           onClick={() => navigate('/')}
-          className="absolute top-[calc(env(safe-area-inset-top,0px)+1.25rem)] left-6 lg:hidden"
+          className="lg:hidden flex items-center gap-2 self-start flex-shrink-0"
         >
-          <Logo size={32} showText textClassName="text-sm" />
+          <div className="h-8 w-8 rounded-xl bg-primary flex items-center justify-center">
+            <LogoMark size={18} />
+          </div>
+          <span className="font-display font-extrabold tracking-tight text-sm">
+            <span className="text-foreground">Campus</span>{' '}<span className="text-primary">Link</span>
+          </span>
         </button>
 
-        <div className="w-full max-w-sm relative z-10 animate-hero">
+        {/* Form wrapper — flex-1 on mobile so it absorbs the remaining
+            vertical height and centers the form within. On desktop it
+            collapses (lg:flex-none) and the parent does the centering. */}
+        <div className="flex-1 lg:flex-none flex items-center justify-center w-full lg:w-auto">
+        <div className="w-full max-w-sm mx-auto relative z-10 animate-hero">
 
           {step === 'verify' ? (
             /* ─── OTP Verification Screen ─── */
@@ -472,9 +488,8 @@ const Auth = () => {
             /* ─── Sign In / Sign Up Form ─── */
             <>
               <div className="text-center mb-8">
-                <div className="lg:hidden flex justify-center mb-5">
-                  <Logo size={56} />
-                </div>
+                {/* The mobile brand mark lives in the top-left header
+                    button — no need to repeat it above the headline. */}
                 <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight mb-2">
                   {isSignUp ? "Create your account" : "Welcome back"}
                 </h1>
@@ -718,6 +733,7 @@ const Auth = () => {
               </p>
             </>
           )}
+        </div>
         </div>
       </div>
     </div>
