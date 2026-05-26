@@ -1003,7 +1003,8 @@ const PostsTab = () => {
      • Row click opens a side-drawer with the full user detail
    ──────────────────────────────────────────────────────────── */
 const PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEK_MS = 7 * DAY_MS;
 
 type UserRow = {
   id: string;
@@ -1015,15 +1016,37 @@ type UserRow = {
   created_at: string;
 };
 
-type UsersView = "all" | "admins" | "new";
+type UsersView = "all" | "admins" | "today" | "new";
+
+/** Auth details returned by admin_get_user_details RPC — fields mirror
+ *  auth.users so the drawer can show what the Supabase dashboard does. */
+type AuthDetails = {
+  id: string;
+  email: string | null;
+  phone: string | null;
+  email_confirmed_at: string | null;
+  phone_confirmed_at: string | null;
+  last_sign_in_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  providers: string[];
+  provider: string | null;
+  banned_until: string | null;
+  role: string | null;
+};
 
 const UsersTab = () => {
   // ─── Data ──────────────────────────────────────────────────────
   const [users, setUsers] = useState<UserRow[]>([]);
   const [adminIds, setAdminIds] = useState<Set<string>>(new Set());
   const [me, setMe] = useState<string | null>(null);
-  const [stats, setStats] = useState({ total: 0, admins: 0, newWeek: 0 });
+  const [stats, setStats] = useState({ total: 0, admins: 0, newToday: 0, newWeek: 0 });
   const [totalCount, setTotalCount] = useState(0);
+
+  // Drawer auth-details
+  const [authDetails, setAuthDetails] = useState<AuthDetails | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // ─── Filter + paging ───────────────────────────────────────────
   const [view, setView] = useState<UsersView>("all");
@@ -1052,17 +1075,25 @@ const UsersTab = () => {
 
   // ─── One-shot: admins, current user, top-level stats ──────────
   const loadAdminsAndStats = useCallback(async () => {
-    const weekAgo = new Date(Date.now() - WEEK_MS).toISOString();
-    const [{ data: roles }, { count: total }, { count: newWeek }, { data: { user } }] = await Promise.all([
+    const now = Date.now();
+    const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+    const weekAgo = new Date(now - WEEK_MS).toISOString();
+    const [{ data: roles }, { count: total }, { count: newToday }, { count: newWeek }, { data: { user } }] = await Promise.all([
       supabase.from("user_roles").select("user_id").eq("role", "admin"),
       supabase.from("profiles").select("*", { count: "exact", head: true }),
+      supabase.from("profiles").select("*", { count: "exact", head: true }).gte("created_at", todayStart.toISOString()),
       supabase.from("profiles").select("*", { count: "exact", head: true }).gte("created_at", weekAgo),
       supabase.auth.getUser(),
     ]);
     const set = new Set((roles || []).map((r: any) => r.user_id));
     setAdminIds(set);
     setMe(user?.id ?? null);
-    setStats({ total: total ?? 0, admins: set.size, newWeek: newWeek ?? 0 });
+    setStats({
+      total:    total    ?? 0,
+      admins:   set.size,
+      newToday: newToday ?? 0,
+      newWeek:  newWeek  ?? 0,
+    });
   }, []);
 
   useEffect(() => { loadAdminsAndStats(); }, [loadAdminsAndStats]);
@@ -1086,6 +1117,9 @@ const UsersTab = () => {
         setUsers([]); setTotalCount(0); setLoading(false); return;
       }
       q = q.in("id", Array.from(adminIds));
+    } else if (view === "today") {
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+      q = q.gte("created_at", todayStart.toISOString());
     } else if (view === "new") {
       const weekAgo = new Date(Date.now() - WEEK_MS).toISOString();
       q = q.gte("created_at", weekAgo);
@@ -1178,30 +1212,146 @@ const UsersTab = () => {
     clearSelection();
   };
 
-  const copyEmail = (email: string | null) => {
-    if (!email) return;
-    navigator.clipboard?.writeText(email);
-    toast.success("Email copied");
+  const copyText = (text: string | null, label = "Copied") => {
+    if (!text) return;
+    navigator.clipboard?.writeText(text);
+    toast.success(label);
+  };
+  const copyEmail = (email: string | null) => copyText(email, "Email copied");
+
+  // ─── Fetch auth.users details for the drawer (admin-only RPC) ──
+  useEffect(() => {
+    if (!drawerUser) { setAuthDetails(null); return; }
+    let cancelled = false;
+    setAuthLoading(true);
+    (async () => {
+      const { data, error } = await supabase.rpc("admin_get_user_details" as any, {
+        p_user_id: drawerUser.id,
+      });
+      if (cancelled) return;
+      if (error) {
+        // RPC may not be deployed yet — show what we have without breaking the UI
+        setAuthDetails(null);
+      } else {
+        setAuthDetails(data as AuthDetails);
+      }
+      setAuthLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [drawerUser]);
+
+  // ─── Export current view to CSV ──────────────────────────────
+  // Fetches ALL rows for the active filter (capped at 10k for safety),
+  // then triggers a browser download. Files are named with the view +
+  // ISO date so admins can keep snapshots.
+  const exportCurrentView = async () => {
+    setExporting(true);
+    try {
+      let q = supabase
+        .from("profiles")
+        .select("id, name, email, course, year_of_study, rating, created_at")
+        .order("created_at", { ascending: false })
+        .limit(10000);
+
+      if (debouncedSearch) {
+        const term = debouncedSearch.replace(/[%_]/g, "\\$&");
+        q = q.or(`name.ilike.%${term}%,email.ilike.%${term}%,course.ilike.%${term}%`);
+      }
+      if (view === "admins") {
+        if (adminIds.size === 0) {
+          toast.error("No admins to export"); setExporting(false); return;
+        }
+        q = q.in("id", Array.from(adminIds));
+      } else if (view === "today") {
+        const t = new Date(); t.setHours(0, 0, 0, 0);
+        q = q.gte("created_at", t.toISOString());
+      } else if (view === "new") {
+        q = q.gte("created_at", new Date(Date.now() - WEEK_MS).toISOString());
+      }
+
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
+
+      const rows = (data || []) as any[];
+      if (rows.length === 0) {
+        toast.error("No users to export");
+        return;
+      }
+
+      // CSV escape — wraps any field with commas, quotes, or newlines
+      const esc = (v: any) => {
+        if (v == null) return "";
+        const s = String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const header = ["UID", "Name", "Email", "Course", "Year", "Rating", "Role", "Joined"];
+      const lines = [header.join(",")];
+      for (const r of rows) {
+        lines.push([
+          esc(r.id),
+          esc(r.name),
+          esc(r.email),
+          esc(r.course),
+          esc(r.year_of_study),
+          r.rating != null ? r.rating.toFixed(1) : "",
+          adminIds.has(r.id) ? "Admin" : "Member",
+          esc(r.created_at),
+        ].join(","));
+      }
+      const csv = lines.join("\n");
+      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `campuslink-users-${view}-${dateStamp}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${rows.length} ${rows.length === 1 ? "user" : "users"}`);
+    } catch (e: any) {
+      toast.error(e?.message || "Export failed");
+    } finally {
+      setExporting(false);
+    }
   };
 
   // ─── Render ────────────────────────────────────────────────────
   return (
     <div className="space-y-4">
       {/* ── Stats header ── */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <UserStatCard icon={Users}        label="Total users"    value={stats.total}    tint="bg-primary/10 text-primary" />
         <UserStatCard icon={ShieldCheck}  label="Admins"         value={stats.admins}   tint="bg-emerald-500/10 text-emerald-600" />
+        <UserStatCard icon={SparklesIcon} label="New today"      value={stats.newToday} tint="bg-rose-500/10 text-rose-600" />
         <UserStatCard icon={SparklesIcon} label="New this week"  value={stats.newWeek}  tint="bg-amber-500/10 text-amber-600" />
       </div>
 
-      {/* ── Saved-view tabs ── */}
-      <Tabs value={view} onValueChange={(v) => setView(v as UsersView)}>
-        <TabsList className="rounded-xl">
-          <TabsTrigger value="all"    className="text-xs">All Users</TabsTrigger>
-          <TabsTrigger value="admins" className="text-xs">Admins</TabsTrigger>
-          <TabsTrigger value="new"    className="text-xs">New This Week</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      {/* ── Header row: tabs + export ── */}
+      <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
+        {/* Saved-view tabs */}
+        <Tabs value={view} onValueChange={(v) => setView(v as UsersView)}>
+          <TabsList className="rounded-xl">
+            <TabsTrigger value="all"    className="text-xs">All Users</TabsTrigger>
+            <TabsTrigger value="admins" className="text-xs">Admins</TabsTrigger>
+            <TabsTrigger value="today"  className="text-xs">New Today</TabsTrigger>
+            <TabsTrigger value="new"    className="text-xs">New This Week</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        {/* Export current view to CSV */}
+        <Button
+          onClick={exportCurrentView}
+          disabled={exporting}
+          variant="outline"
+          size="sm"
+          className="rounded-xl text-xs font-semibold"
+        >
+          {exporting ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5 mr-1.5 -rotate-90" />}
+          Export {view === "all" ? "all" : view === "admins" ? "admins" : view === "today" ? "new today" : "new this week"} (CSV)
+        </Button>
+      </div>
 
       {/* ── Search ── */}
       <div className="relative">
@@ -1425,6 +1575,7 @@ const UsersTab = () => {
                 <SheetTitle>User details</SheetTitle>
               </SheetHeader>
               <div className="mt-4 space-y-5">
+                {/* Header card — avatar + name + chip */}
                 <div className="flex items-center gap-3">
                   <Avatar className="h-16 w-16">
                     <AvatarImage src={drawerUser.profile_picture || ""} />
@@ -1441,17 +1592,76 @@ const UsersTab = () => {
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground truncate">{drawerUser.email}</p>
+                    <p className="text-xs text-muted-foreground truncate">{drawerUser.email || authDetails?.email}</p>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <DetailField label="Course"  value={drawerUser.course} />
-                  <DetailField label="Rating"  value={drawerUser.rating != null ? drawerUser.rating.toFixed(1) : null} />
-                  <DetailField label="Joined"  value={format(new Date(drawerUser.created_at), "MMM d, yyyy")} />
-                  <DetailField label="User ID" value={drawerUser.id.slice(0, 8) + "…"} mono />
+                {/* ── Real UID (full, monospaced) with copy ── */}
+                <div className="rounded-lg bg-muted/30 p-2.5">
+                  <p className="text-[9px] uppercase tracking-wider font-bold text-muted-foreground">UID</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <p className="text-[11px] font-mono break-all flex-1">{drawerUser.id}</p>
+                    <button
+                      onClick={() => copyText(drawerUser.id, "UID copied")}
+                      className="text-[10px] font-semibold text-primary hover:underline flex-shrink-0"
+                    >
+                      Copy
+                    </button>
+                  </div>
                 </div>
 
+                {/* ── Profile-side fields ── */}
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <DetailField label="Display name" value={drawerUser.name} />
+                  <DetailField label="Course"       value={drawerUser.course} />
+                  <DetailField label="Rating"       value={drawerUser.rating != null ? drawerUser.rating.toFixed(1) : null} />
+                  <DetailField label="Joined"       value={format(new Date(drawerUser.created_at), "MMM d, yyyy")} />
+                </div>
+
+                {/* ── Auth-side fields (from admin_get_user_details RPC) ── */}
+                <div className="space-y-2">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-1">
+                    Authentication
+                  </p>
+                  {authLoading ? (
+                    <div className="rounded-lg bg-muted/20 p-3 flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Loading auth details…
+                    </div>
+                  ) : authDetails ? (
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <DetailField label="Email" value={authDetails.email} />
+                      <DetailField label="Phone" value={authDetails.phone || "—"} />
+                      <DetailField
+                        label="Providers"
+                        value={
+                          Array.isArray(authDetails.providers) && authDetails.providers.length > 0
+                            ? authDetails.providers.join(", ")
+                            : authDetails.provider || "—"
+                        }
+                      />
+                      <DetailField label="Provider type" value={authDetails.provider || "—"} />
+                      <DetailField
+                        label="Created at"
+                        value={authDetails.created_at ? format(new Date(authDetails.created_at), "EEE d MMM yyyy 'at' HH:mm") : "—"}
+                      />
+                      <DetailField
+                        label="Last sign in at"
+                        value={
+                          authDetails.last_sign_in_at
+                            ? format(new Date(authDetails.last_sign_in_at), "EEE d MMM yyyy 'at' HH:mm")
+                            : (authDetails.email_confirmed_at ? "—" : "Waiting for verification")
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <div className="rounded-lg bg-muted/20 p-3 text-[11px] text-muted-foreground">
+                      Auth details unavailable. Run the <code className="font-mono text-[10px]">admin_get_user_details</code> migration to enable.
+                    </div>
+                  )}
+                </div>
+
+                {/* Actions */}
                 {me !== drawerUser.id && (
                   <div className="pt-2 border-t border-border/40 flex gap-2">
                     {adminIds.has(drawerUser.id) ? (
@@ -1474,7 +1684,7 @@ const UsersTab = () => {
                         Make admin
                       </Button>
                     )}
-                    <Button variant="outline" onClick={() => copyEmail(drawerUser.email)} className="rounded-xl">
+                    <Button variant="outline" onClick={() => copyEmail(drawerUser.email || authDetails?.email || null)} className="rounded-xl">
                       <Mail className="h-3.5 w-3.5" />
                     </Button>
                   </div>
