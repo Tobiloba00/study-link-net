@@ -488,8 +488,13 @@ const Auth = () => {
             /* ─── Sign In / Sign Up Form ─── */
             <>
               <div className="text-center mb-8">
-                {/* The mobile brand mark lives in the top-left header
-                    button — no need to repeat it above the headline. */}
+                {/* Small brand mark above the headline — restored at user
+                    request as a focal anchor above the form. */}
+                <div className="lg:hidden flex justify-center mb-4">
+                  <div className="h-11 w-11 rounded-2xl bg-primary flex items-center justify-center shadow-md shadow-primary/20">
+                    <LogoMark size={24} />
+                  </div>
+                </div>
                 <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight mb-2">
                   {isSignUp ? "Create your account" : "Welcome back"}
                 </h1>
