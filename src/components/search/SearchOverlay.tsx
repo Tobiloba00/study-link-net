@@ -38,8 +38,6 @@ type Props = {
   onSubmit: (query: string) => void;
   onGoToProfile: (userId: string) => void;
   onMessage: (userId: string) => void;
-  /** Mobile: outer "Cancel" pressed. */
-  onCancel: () => void;
   /** Layout — mobile shows full-screen overlay, desktop shows anchored dropdown */
   isMobile: boolean;
 };
@@ -57,7 +55,6 @@ export const SearchOverlay = ({
   recent, onRecentRemove, onRecentClear,
   trending,
   onSubmit, onGoToProfile, onMessage,
-  onCancel,
   isMobile,
 }: Props) => {
   const [results, setResults] = useState<SearchOverlayProfile[]>([]);
@@ -122,19 +119,21 @@ export const SearchOverlay = ({
     <div
       className={cn(
         isMobile
-          ? "fixed inset-0 z-[60] bg-background overflow-y-auto pt-[calc(env(safe-area-inset-top,0px)+76px)] px-4 pb-32"
+          // Mobile: starts BELOW the fixed search bar (safe-area + 72px)
+          // so it never physically overlaps the input. z-[60] keeps it
+          // above the page content but below the input row (z-[100]).
+          ? "fixed left-0 right-0 bottom-0 z-[60] bg-background overflow-y-auto px-4 pb-32"
           : "absolute left-0 right-0 top-full mt-2 z-50 bg-card rounded-2xl border border-border/50 shadow-xl overflow-hidden",
       )}
+      style={
+        isMobile
+          ? { top: "calc(env(safe-area-inset-top, 0px) + 72px)" }
+          : undefined
+      }
     >
-      {/* Mobile-only: Cancel chip floats over the page's existing search bar */}
-      {isMobile && (
-        <button
-          onClick={onCancel}
-          className="absolute right-4 top-[calc(env(safe-area-inset-top,0px)+24px)] z-[70] text-sm font-bold text-primary"
-        >
-          Cancel
-        </button>
-      )}
+      {/* Cancel is rendered by the parent (UserSearch) next to the
+          input on mobile — keeps it pinned to the search bar instead
+          of floating awkwardly over the page. */}
 
       {/* ─── State 3: typing — top results ─── */}
       {isTyping ? (

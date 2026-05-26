@@ -309,30 +309,68 @@ const UserSearch = () => {
           </div>
         )}
 
-        {/* ─── Search bar + overlay anchor ─── */}
-        <div ref={overlayRootRef} className="relative mb-3">
-          <div className="relative bg-card rounded-2xl border border-border/50 shadow-sm">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-            <Input
-              ref={inputRef}
-              type="text"
-              placeholder="Search by name, course, or bio…"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              onFocus={() => setIsFocused(true)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleSubmit(searchInput);
-                if (e.key === "Escape") { setIsFocused(false); inputRef.current?.blur(); }
-              }}
-              className="pl-11 pr-9 h-12 bg-transparent border-none focus-visible:ring-0 text-sm"
-            />
-            {searchInput && (
+        {/* ─── Search bar + overlay anchor ───
+            Mobile + focused: lift the entire bar to `fixed top-0 z-[70]`
+            so it sits ABOVE the overlay (which is z-60 covering the
+            viewport). Without this lift, the overlay covers the input
+            and the user can't see what they're typing. */}
+        <div
+          ref={overlayRootRef}
+          className={cn(
+            "mb-3",
+            isFocused && isMobile
+              ? "fixed left-0 right-0 top-0 z-[70] bg-background px-4 pb-2 shadow-sm"
+              : "relative",
+          )}
+          style={
+            isFocused && isMobile
+              ? { paddingTop: "calc(env(safe-area-inset-top, 0px) + 0.5rem)" }
+              : undefined
+          }
+        >
+          {/* Input row — gets relative + z-[100] so it paints ABOVE the
+              overlay (z-60) inside the wrapper's stacking context.
+              Without this lift, the overlay covers the input on mobile
+              and the user can't see what they're typing. */}
+          <div className="flex items-center gap-2 relative z-[100]">
+            <div className="flex-1 relative bg-card rounded-2xl border border-border/50 shadow-sm">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Input
+                ref={inputRef}
+                type="text"
+                placeholder="Search by name, course, or bio…"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onFocus={() => setIsFocused(true)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSubmit(searchInput);
+                  if (e.key === "Escape") { setIsFocused(false); inputRef.current?.blur(); }
+                }}
+                className="pl-11 pr-9 h-12 bg-transparent border-none focus-visible:ring-0 text-sm"
+              />
+              {searchInput && (
+                <button
+                  onClick={handleClearInput}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 h-6 w-6 rounded-full hover:bg-muted flex items-center justify-center text-muted-foreground"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Mobile Cancel — sits next to the input when focused so the
+                user can dismiss without breaking layout */}
+            {isFocused && isMobile && (
               <button
-                onClick={handleClearInput}
-                className="absolute right-3 top-1/2 -translate-y-1/2 h-6 w-6 rounded-full hover:bg-muted flex items-center justify-center text-muted-foreground"
-                aria-label="Clear search"
+                onClick={() => {
+                  setIsFocused(false);
+                  setSearchInput(submittedQuery);
+                  inputRef.current?.blur();
+                }}
+                className="text-sm font-bold text-primary px-1 flex-shrink-0"
               >
-                <X className="h-3.5 w-3.5" />
+                Cancel
               </button>
             )}
           </div>
@@ -348,7 +386,6 @@ const UserSearch = () => {
               onSubmit={handleSubmit}
               onGoToProfile={handleGoToProfile}
               onMessage={handleMessage}
-              onCancel={() => { setIsFocused(false); setSearchInput(submittedQuery); inputRef.current?.blur(); }}
               isMobile={isMobile}
             />
           )}
